@@ -1,0 +1,704 @@
+<template id="template">
+    <div class="well">
+        数据库列表：
+        <label class="radio-inline" v-for="(item, i) in databases">
+            <input type="radio" name="database" :value="item" v-model="database" @change="changeDatabase(item)">{{item}}
+        </label>
+        <button class="btn btn-primary btn-sm" style="margin-left: 10px;" @click="showExecuteSQL">{{database}} -> 执行SQL</button>
+        <button type="button" class="btn btn-info"  style="margin-left: 10px" @click="localDiffTables">
+            {{database}}同步表结构
+        </button>
+        <button type="button" class="btn btn-info"  style="margin-left: 10px" @click="saveCreateTable">
+            下载Table创建SQL
+        </button>
+        <button type="button" class="btn btn-info"  style="margin-left: 10px" @click="saveTableData">
+            下载所有的Table数据
+        </button>
+        <button class="btn btn-primary btn-sm" style="margin-left: 10px" @click="showRepaceForm">替换数据</button>
+    </div>
+    <div class="row">
+        <div class="col-md-3">
+            <p>Table列表</p>
+            <p>
+                <input type="text" class="form-control" v-model="keyword" placeholder="搜索表名" @input="filterTable"/>
+            </p>
+            <div class="list-group" style="height: 700px; overflow: scroll;" :class="loading ? 'disabled' : ''">
+                <template v-for="(item, i) in tables1">
+                    <a href="#" class="list-group-item" :class="item == table ? 'active' : ''"
+                        @click="selectTable(item)">{{item}}</a>
+                </template>
+            </div>
+        </div>
+        <div class="col-md-9">
+            <p style="font-size: 18px;">当前表：{{table}} <small>
+                    <button class="btn btn-link btn-sm" @click="createItem">新增记录</button>
+                    <button class="btn btn-link btn-sm" @click="deleteAllItem">清理当前表</button>
+                    <button class="btn btn-link btn-sm" @click="showCreateTable">查看CreateTable</button>
+                </small></p>
+            <div style="margin-bottom: 10px;" class="row">
+                <div class="col-md-10" id="where">
+                </div>
+                <div class="col-md-2">
+                    <button class="btn btn-primary" @click="searchTableData">查询{{table}}</button>
+                </div>
+            </div>
+
+            <div class="btn-group" role="group" style="margin-bottom: 10px;">
+                <input type="text" class="form-control" placeholder="分页"
+                    style="width: 150px; display: inline-block;margin-left: 10px;" v-model="page_size" />
+                <button type="button" class="btn btn-primary" @click="prevPage" :disabled="page <= 1 "
+                    :disable="loading">上一页</button>
+                <button type="button" class="btn btn-default" disabled>当前: {{page}} / 总页数:
+                    {{totalPage}}，总数{{dataCount}}</button>
+                <button type="button" class="btn btn-primary" @click="nextPage" :disable="loading">下一页</button>
+            </div>
+
+            <div v-if="loading">
+                奋力加载中...
+            </div>
+            <div v-else-if="tableData.length < 1">
+                暂无数据
+            </div>
+            <template v-for="(item, i) in tableData">
+                <div class="panel panel-default">
+                    <div class="panel-heading">
+                        <div class="panel-title">
+                            {{item.id}}
+                            <a href="javascript:;" style="float: right;" @click="editItem(item)" class="ml-10">修改<span
+                                    class="glyphicon glyphicon-pencil"></span></a>
+                            <a href="javascript:;" style="float: right;" @click="deleteRecord(item)" class="ml-10">删除</a>
+                            <a href="javascript:;" style="float: right;" @click="showJSON(item)">JSON</a>
+                        </div>
+                    </div>
+                    <div class="panel-body">
+                        <template v-for="(field, i) in tableFields">
+                            <div class="row">
+                                <div class="col-md-4" style="text-align: right;"><strong>{{field.Field}}:</strong></div>
+                                <div class="col-md-8"
+                                    v-if="item[field.Field] != undefined && item[field.Field] != null && [field.Field].length != undefined && item[field.Field].length > 50">
+                                    <textarea class="form-control" rows="3"
+                                        :value="item[field.Field]">{{item[field.Field]}}</textarea>
+                                </div>
+                                <div class="col-md-8" v-else>{{item[field.Field]}}</div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </template>
+        </div>
+    </div>
+
+    <div class="modal fade" tabindex="-1" role="dialog" aria-labelledby="editModal" data-backdrop='static'
+        id="editModal">
+        <div class="modal-dialog modal-lg" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h4 class="modal-title">修改{{table}}记录</h4>
+                </div>
+                <div class="modal-body">
+                    <template v-for="(field, i) in tableFields">
+                        <strong>{{field.Field}}:</strong>
+                        <p><textarea class="form-control" rows="1" v-model="record[[field.Field]]"
+                                :disabled="field.Field == 'id' || field.Field == 'create_time'"></textarea></p>
+                    </template>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-default" data-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" @click="updateRecord">修改</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" tabindex="-1" role="dialog" aria-labelledby="createModal" data-backdrop='static'
+        id="createModal">
+        <div class="modal-dialog modal-lg" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h4 class="modal-title">{{table}}创建</h4>
+                </div>
+                <div class="modal-body">
+                    <template v-for="(field, i) in tableFields">
+                        <strong>{{field.Field}}:</strong>
+                        <p><textarea class="form-control" rows="1" v-model="createData[[field.Field]]"></textarea></p>
+                    </template>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-default" data-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" @click="createRecord">创建</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" tabindex="-1" role="dialog" aria-labelledby="sqlModal" id="sqlModal">
+        <div class="modal-dialog" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h4 class="modal-title">请输入SQL，仅支持update、delete、create等语句</h4>
+                </div>
+                <div class="modal-body">
+                    <textarea class="form-control" rows="5" v-model="sql"></textarea>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-default" data-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" @click="execSQL">执行SQL</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" tabindex="-1" role="dialog" aria-labelledby="replaceModal" id="replaceModal">
+        <div class="modal-dialog" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h4 class="modal-title">请输入替换内容</h4>
+                </div>
+                <div class="modal-body">
+                    <strong>替换前的值:</strong>
+                    <input class="form-control" rows="5" v-model="oldData"></input>
+                    <strong>替换后的值:</strong>
+                    <input class="form-control" rows="5" v-model="newData"></input>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-default" data-dismiss="modal">取消</button>
+                    <button type="button" id="repaceSqlBtn" class="btn btn-primary" @click="execReplace"
+                        :disabled="isReplaceSQLBtn">执行SQL</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" tabindex="-1" role="dialog" aria-labelledby="jsonModal" id="jsonModal">
+        <div class="modal-dialog" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h4 class="modal-title">JSON</h4>
+                </div>
+                <div class="modal-body">
+                    <textarea class="form-control" rows="25" v-model="json"></textarea>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" tabindex="-1" role="dialog" aria-labelledby="jsonModal" id="diffModal">
+        <div class="modal-dialog" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h4 class="modal-title">`{{database}}`数据表结构对比结果</h4>
+                </div>
+                <div class="modal-body">
+                    <template v-if="Object.keys(newTables).length > 0">
+                        <h3>新增Table <button class="btn btn-primary btn-sm" style="margin-left: 10px;"
+                                @click="execCreateSQL">创建以下table</button></h3>
+                        <span class="label label-info" v-for="(sql, table) in newTables">{{table}}</span>
+                    </template>
+                    <h3>Table新增字段</h3>
+                    <template v-if="Object.keys(newFields).length > 0">
+                        <div style="max-height: 300px; overflow: scroll;">
+                            <div class="table-responsive">
+<table class="table table-bordered table-condensed">
+                                <thead>
+                                    <tr>
+                                        <th>Table</th>
+                                        <th>字段</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <template v-for="(fields, t) in newFields">
+                                        <template v-for="item in fields">
+                                            <tr>
+                                                <td>{{t}}</td>
+                                                <td>{{item.Field}}</td>
+                                            </tr>
+                                        </template>
+                                    </template>
+                                </tbody>
+                            </table>
+</div>
+                        </div>
+                    </template>
+                    <h3>Table更新字段</h3>
+                    <template v-if="Object.keys(updateFields).length > 0">
+                        <div style="max-height: 300px; overflow: scroll;">
+                            <div class="table-responsive">
+<table class="table table-bordered table-condensed">
+                                <thead>
+                                    <tr>
+                                        <th>Table</th>
+                                        <th>字段</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <template v-for="(fields, t) in updateFields">
+                                        <template v-for="item in fields">
+                                            <tr>
+                                                <td>{{t}}</td>
+                                                <td>{{item.Field}}</td>
+                                            </tr>
+                                        </template>
+                                    </template>
+                                </tbody>
+                            </table>
+</div>
+                        </div>
+                    </template>
+                    <div><strong>alter sql</strong>
+                        <button class="btn btn-primary btn-sm" style="margin-left: 10px;"
+                            @click="execAlterSQL">执行SQL</button>
+                    </div>
+                    <textarea class="form-control" rows="5">{{alertSQLs.join(';\n')}}</textarea>
+                </div>
+            </div>
+        </div>
+    </div>
+</template>
+<script>
+    const PageSize = 10
+    var whereJsonEditor = null
+    function genAlterSQL(table, field) {
+        let sql = "alter table `" + table + "` add `" + field.Field + "` " + field.Type
+        if (field.Null == "NO") {
+            sql += " not null"
+        }
+        if (field.Default != null) {
+            sql += " default '" + field.Default + "'"
+        }
+        if (field.Extra.length > 0) {
+            sql += " " + field.Extra
+        }
+        sql += " comment '" + field.Field + "'"
+        return sql
+    }
+    function genModifySQL(table, field) {
+        let sql = "alter table `" + table + "` modify `" + field.Field + "` " + field.Type
+        if (field.Null == "NO") {
+            sql += " not null"
+        }
+        if (field.Default != null) {
+            sql += " default '" + field.Default + "'"
+        }
+        if (field.Extra.length > 0) {
+            sql += " " + field.Extra
+        }
+        sql += " comment '" + field.Field + "'"
+        return sql
+    }
+    window.VueObject = {
+        data() {
+            let list = []
+            return {
+                dir: '/',
+                page: 1,
+                page_size: PageSize,
+                database: '',
+                databases: [],
+                tables: [],
+                tables1 : [],
+                table: '',
+                tableFields: [],
+                where: '',
+                tableData: [],
+                record: {},
+                sql: '',
+                json: '',
+                keyword : '',
+                dataCount: 0,
+                totalPage: 0,
+                loading: false,
+                createData: {},
+
+                newTables: {},
+                newFields: {},
+                updateFields: {},
+                alertSQLs: [],
+                oldData: "",
+                newData: "",
+                isReplaceSQLBtn: false,
+            }
+        },
+        template: '#template',
+        async mounted() {
+            whereJsonEditor = initJSONEditor('where', {})
+            this.database = getQuery('database', '')
+            this.table = getQuery('table', 'project')
+            this.getDatabases()
+            this.tables = await this.getTables()
+            if (this.tables.length > 0 && this.table.length < 1) {
+                this.table = this.tables[0]
+            }
+            this.filterTable()
+            this.searchTableData()
+        },
+        methods: {
+            async filterTable() {
+                if(this.keyword.length < 1) {
+                    this.tables1 = this.tables
+                    return
+                }
+                this.tables1 = this.tables.filter(t => t.indexOf(this.keyword) > -1)
+            },
+            async getDatabases() {
+                let result = await axios.get('/api/mysql/database')
+                this.databases = result.data.data.filter(t => t.indexOf('Apollo') < 0)
+            },
+            async getTables() {
+                if (this.database.length > 0) {
+                    let result = await axios.get('/api/mysql/table/' + this.database)
+                    return result.data.data
+                }
+                return []
+            },
+            selectTable(t) {
+                this.table = t
+                this.page = 1
+                this.searchTableData()
+            },
+            async changeDatabase() {
+                this.tables = await this.getTables()
+                this.filterTable()
+                if (this.tables.length > 0) {
+                    this.table = this.tables[0]
+                }
+                this.page = 1
+                this.searchTableData()
+            },
+            async searchTableData() {
+                this.loading = true
+                this.totalPage = 0
+                this.tableData = []
+                let result0 = await axios.get('/api/mysql/desc/' + this.database + '/' + this.table)
+                if (result0.data.code != 0) {
+                    bootbox.alert(result0.data.message)
+                    this.loading = false
+                    return
+                }
+                this.tableFields = result0.data.data
+                let result = await axios.post('/api/mysql/query/' + this.database + '/' + this.table, {
+                    where: whereJsonEditor.get(),
+                    page: this.page,
+                    page_size: parseInt(this.page_size),
+                })
+                this.tableData = result.data.data
+                //window.Vm.$set('tableData', result.data.data) 
+                let result1 = await axios.post('/api/mysql/count/' + this.database + '/' + this.table, {
+                    where: whereJsonEditor.get(),
+                })
+                this.dataCount = result1.data.data.total
+                this.totalPage = Math.ceil(this.dataCount / this.page_size)
+                if (this.dataCount % this.page_size == 0) {
+                    this.totalPage = this.totalPage - 1
+                }
+                this.loading = false
+            },
+            async editItem(record) {
+                this.record = JSON.parse(JSON.stringify(record))
+                $('#editModal').modal('show');
+            },
+            async createItem() {
+                let data = {}
+                for (var i in this.tableFields) {
+                    data[this.tableFields[i].Field] = ''
+                }
+                this.createData = data
+                $('#createModal').modal('show');
+            },
+            async createRecord() {
+                let postData = {}
+                let data = {}
+                for (var i in this.tableFields) {
+                    if (this.createData[this.tableFields[i].Field] != undefined && this.createData[this.tableFields[i].Field].length > 0) {
+                        postData[this.tableFields[i].Field] = this.createData[this.tableFields[i].Field]
+                    }
+                }
+                let result = await axios.post('/api/mysql/create/' + this.database + '/' + this.table, postData)
+                if (result.data.code != 0) {
+                    bootbox.alert(result.data.message)
+                } else {
+                    $('#createModal').modal('hide');
+                    bootbox.alert('创建成功')
+                    this.searchTableData()
+                }
+            },
+            async updateRecord() {
+                let result = await axios.post('/api/mysql/update/' + this.database + '/' + this.table + "/" + this.record.id, this.record)
+                if (result.data.code != 0) {
+                    bootbox.alert(result.data.message)
+                } else {
+                    $('#editModal').modal('hide');
+                    bootbox.alert('修改成功')
+                    this.searchTableData()
+                }
+            },
+            deleteRecord(item) {
+                bootbox.confirm('确认删除该条数据？无法恢复', async (result) => {
+                    if (!result) {
+                        return
+                    }
+                    let result1 = await axios.post('/api/mysql/exec_sql/' + this.database, {
+                        sql: base64Encode("delete from " + this.table + " where id = " + item.id),
+                    })
+                    if (result1.data.code != 0) {
+                        bootbox.alert(result1.data.message)
+                    } else {
+                        bootbox.alert('修改成功', () => {
+                            this.searchTableData()
+                        })
+                    }
+                })
+            },
+            nextPage() {
+                this.page = this.page + 1
+                this.searchTableData()
+            },
+            prevPage() {
+                this.page = this.page - 1
+                this.searchTableData()
+            },
+            showExecuteSQL() {
+                $('#sqlModal').modal('show');
+            },
+            showRepaceForm() {
+                $('#replaceModal').modal('show');
+            },
+            async execSQL() {
+                let result1 = await axios.post('/api/mysql/exec_sql/' + this.database, {
+                    sql: base64Encode(this.sql)
+                })
+                if (result1.data.code != 0) {
+                    bootbox.alert(result1.data.message)
+                    return
+                }
+                $('#sqlModal').modal('hide');
+                bootbox.alert('执行成功', this.searchTableData)
+            },
+            async execReplace() {
+                this.isReplaceSQLBtn = true
+                let response = await axios.post('/api/mysql/replace', {
+                    old_data: this.oldData,
+                    new_data: this.newData,
+                })
+                this.isReplaceSQLBtn = false
+                console.log(response)
+                if (response.data.code != 0) {
+                    $('#replaceModal').modal('hide');
+                    bootbox.alert(response.data.message);
+                    return;
+                }
+                $('#replaceModal').modal('hide');
+                bootbox.alert('执行成功');
+            },
+            showJSON(item) {
+               showJSONString(JSON.stringify(item))
+            },
+            async diffTables() {
+                let result = await httpGet(window.PageData["online_table_url"], {
+                    database: this.database,
+                })
+                if (result.code != 0) {
+                    bootbox.alert(result.message)
+                    return
+                }
+                let data = JSON.parse(result.data)
+                if (data.code != 0) {
+                    bootbox.alert(data.status)
+                    return
+                }
+                this.doTableDiff(data.data)
+            },
+            diffTableFields(current, online) {
+                let fieldMapping = {}
+                for (let i = 0; i < current.length; i++) {
+                    fieldMapping[current[i].Field] = current[i]
+                }
+                let addFields = []
+                let updateFields = []
+                for (let i = 0; i < online.length; i++) {
+                    if (fieldMapping[online[i].Field] == undefined) {
+                        addFields.push(online[i])
+                    } else {
+                        console.log(fieldMapping[online[i].Field].Type, online[i].Type, fieldMapping[online[i].Field].Type != online[i].Type)
+                        if(fieldMapping[online[i].Field].Type != online[i].Type && fieldMapping[online[i].Field].Type.indexOf('varchar') >= 0) {
+                            updateFields.push(online[i])
+                        }
+                    }
+                }
+                console.log(addFields, updateFields)
+                return {
+                    add: addFields,
+                    update: updateFields,
+                }
+            },
+            generateAlterSQL(table, list) {
+                let sql = [];
+                for (let i = 0; i < list.length; i++) {
+                    sql.push(genAlterSQL(table, list[i]))
+                }
+                return sql
+            },
+            generateModifySQL(table, list) {
+                let sql = [];
+                for (let i = 0; i < list.length; i++) {
+                    sql.push(genModifySQL(table, list[i]))
+                }
+                return sql
+            },
+            async execAlterSQL() {
+                let errList = []
+                for (let i = 0; i < this.alertSQLs.length; i++) {
+                    let result = await axios.post('/api/mysql/exec_sql/' + this.database, {
+                        sql: base64Encode(this.alertSQLs[i]),
+                    })
+                    if (result.data.code != 0) {
+                        errList.push(result.data.message)
+                    }
+                }
+                if (errList.length > 0) {
+                    bootbox.alert("执行有报错，请检查<textarea rows=6>" + errList.join('\n') + '</textarea>')
+                } else {
+                    bootbox.alert("执行完成")
+                }
+            },
+            async localDiffTables() {
+                bootboxLoading("获取数据表结构...")
+                let tmp = await axios.get('/mysql_data/struct/' + this.database + '.json?ts=' + getNowTimeKey() )
+                let origin_json = '{}'
+                if (tmp.status == 200) {
+                    origin_json = JSON.stringify(tmp.data)
+                }
+                bootbox.hideAll()
+                bootbox.prompt({
+                    title: "该数据库的字段结构，（默认从`/mysql_data/struct/" + this.database + ".json文件`加载）",
+                    inputType: 'textarea',
+                    value: origin_json,
+                    size : 'large',
+                    inputOptions : {
+                        rows : 20  
+                    },
+                    callback: (result) => {
+                        if (result == null) return
+                        try {
+                            let data = JSON.parse(result)
+                            this.doTableDiff(data)
+                        } catch (e) {
+                            bootbox.alert("格式有误" + e.message)
+                        }
+                    }
+                })
+            },
+            async doTableDiff(data) {
+                let tables = Object.keys(data)
+                let newTables = {}
+                let newFields = {}
+                let updateFields = {}
+                let alterSQLs = [];
+                bootbox.alert("正在对比中，请稍后...")
+                for (let i = 0; i < tables.length; i++) {
+                    let local_result = await axios.get('/api/mysql/desc/' + this.database + '/' + tables[i])
+                    if (local_result.data.code != 0) {
+                        newTables[tables[i]] = data[tables[i]]
+                    } else {
+                        let diff = this.diffTableFields(local_result.data.data, data[tables[i]]['desc'])
+                        if (diff.add.length > 0) {
+                            newFields[tables[i]] = diff.add
+                            alterSQLs.push(...this.generateAlterSQL(tables[i], diff.add))
+                        }
+                        if (diff.update.length > 0) {
+                            updateFields[tables[i]] = diff.update
+                            alterSQLs.push(...this.generateModifySQL(tables[i], diff.update))
+                        }
+                    }
+                }
+                bootbox.hideAll()
+                if (Object.keys(newFields).length < 1 && Object.keys(newTables).length < 1 && Object.keys(updateFields).length < 1) {
+                    bootbox.alert(`very good，数据库${this.database}中的表结构和线上没有差异`)
+                    return
+                }
+                this.newTables = newTables
+                this.newFields = newFields
+                this.updateFields = updateFields
+                this.alertSQLs = alterSQLs
+                $('#diffModal').modal('show')
+                //bootbox.alert("对比完成")
+                console.log("new_tables", newTables)
+                console.log("new_fields", newFields)
+            },
+            async execCreateSQL() {
+                let errList = []
+                let tables = Object.keys(this.newTables)
+                for (let i = 0; i < tables.length; i++) {
+                    let result = await axios.post('/api/mysql/exec_sql/' + this.database, {
+                        sql: base64Encode(this.newTables[tables[i]].sql),
+                    })
+                    if (result.data.code != 0) {
+                        errList.push(result.data.message)
+                    }
+                }
+                if (errList.length > 0) {
+                    bootbox.alert("执行有报错，请检查<textarea rows=6>" + errList.join('\n') + '</textarea>')
+                } else {
+                    bootbox.alert("执行完成")
+                }
+            },
+            async deleteAllItem() {
+                bootbox.confirm("确认删除" + this.table + "表中的所有数据吗？", async (result) => {
+                    if (!result) {
+                        return
+                    }
+                    let result1 = await axios.post('/api/mysql/exec_sql/' + this.database, {
+                        sql: base64Encode("delete from " + this.table),
+                    })
+                    if (result1.data.code!= 0) {
+                        bootbox.alert(result1.data.message)
+                        return
+                    }   
+                    bootbox.alert('删除成功', () => {
+                        this.searchTableData()
+                    })
+                })  
+            },
+            async showCreateTable() {
+                let result = await axios.get('/api/mysql/show_create_table/' + this.database + '/' + this.table)
+                if (result.data.code!= 0) {
+                    bootbox.alert(result.data.message)
+                    return
+                }
+                let sql = result.data.data.sql
+                showJSONString(sql)
+            },
+            async saveCreateTable() {
+                let sql = ['use ' + this.database]
+                bootboxLoading("正在导出表结构，请稍后...")
+                for(let i = 0; i < this.tables.length; i++) {
+                    let result = await axios.get('/api/mysql/show_create_table/' + this.database + '/' + this.tables[i])
+                    if (result.data.code == 0) {
+                        sql.push(result.data.data.sql)
+                    }
+                }
+                let sqlStr = sql.join(';\n')
+                bootbox.hideAll()
+                bootbox.alert("下载成功， 文件名为" + this.database + ".sql， 请查看")
+                saveFile(sqlStr, this.database + ".sql")
+            },
+            async saveTableData() {
+                bootboxLoading("正在导出数据，请稍后...")
+                for(let i = 0; i < this.tables.length; i++) {
+                    let result = await axios.post('/api/mysql/query/' + this.database + '/' + this.tables[i], {
+                        page: 1,
+                        page_size: 100000000,
+                    })
+                    if (result.data.code != 0) {
+                        bootbox.alert(result.data.message)
+                        return
+                    }
+                    let data = result.data.data
+                    saveFile(JSON.stringify(data), this.tables[i] + ".json")
+                }
+                bootbox.hideAll()
+                bootbox.alert("下载成功， 请查看")
+            }
+        },
+
+    }
+</script>

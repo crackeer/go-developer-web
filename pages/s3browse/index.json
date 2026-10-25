@@ -1,0 +1,8 @@
+{
+    "title" : "S3文件查看",
+    "page_data" : {
+        "alias" : "minio",
+        "public_bucket" : "vrlab-public-1",
+        "private_bucket" : "vrlab-1"
+    }
+}

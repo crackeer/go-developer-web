@@ -1,0 +1,64 @@
+<template id="template">
+    <div style="padding: 10px 7.5%;">
+        <div class="form-inline" style="margin-bottom: 10px;">
+            <label>Salt</label>
+            <input type="text" class="form-control" v-model="salt" placeholder="hashids salt" style="width: 260px;">
+            <label style="margin-left: 10px;">MinLength</label>
+            <input type="number" class="form-control" v-model.number="minLength" style="width: 100px;">
+            <button type="button" class="btn btn-primary" @click="encode" style="margin-left: 15px;">Encode</button>
+            <button type="button" class="btn btn-default" @click="decode" style="margin-left: 10px;">Decode</button>
+        </div>
+    </div>
+    <div class="row">
+        <div class="col-md-6">
+            <div class="panel-heading">输入（Encode: 逗号分隔的整数；Decode: hashid 字符串）</div>
+            <textarea class="form-control" rows="24" v-model="content"></textarea>
+        </div>
+        <div class="col-md-6">
+            <div class="panel-heading">结果</div>
+            <textarea class="form-control" rows="24" v-model="output"></textarea>
+        </div>
+    </div>
+</template>
+<script>
+    window.VueObject = {
+        data() {
+            return {
+                salt: '',
+                minLength: 0,
+                content: '',
+                output: '',
+            }
+        },
+        template: '#template',
+        methods: {
+            async encode() {
+                const params = this.content.split(',')
+                    .map(s => s.trim()).filter(s => s.length > 0)
+                    .map(s => parseInt(s))
+                const result = await axios.post('/api/hashids/encode', {
+                    salt: this.salt,
+                    min_length: this.minLength,
+                    params: params,
+                })
+                if (!result.data || result.data.code !== 0) {
+                    this.output = '转换失败：' + ((result.data && result.data.message) || '')
+                    return
+                }
+                this.output = result.data.data.response
+            },
+            async decode() {
+                const result = await axios.post('/api/hashids/decode', {
+                    salt: this.salt,
+                    string: this.content.trim(),
+                    min_length: this.minLength,
+                })
+                if (!result.data || result.data.code !== 0) {
+                    this.output = '转换失败：' + ((result.data && result.data.message) || '')
+                    return
+                }
+                this.output = JSON.stringify(result.data.data.response, null, 4)
+            },
+        }
+    }
+</script>

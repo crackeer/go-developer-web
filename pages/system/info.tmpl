@@ -1,0 +1,339 @@
+<template id="template">
+    <div class="well well-sm" style="margin-bottom: 15px;">
+        <button type="button" class="btn btn-primary btn-sm" @click="loadInfo" :disabled="loading">
+            {{ loading ? '加载中…' : '刷新' }}
+        </button>
+        <span v-if="loadError" class="text-danger" style="margin-left: 12px;">{{ loadError }}</span>
+        <span v-if="library" class="text-muted" style="margin-left: 12px;">来源：{{ library }}</span>
+    </div>
+
+    <div class="panel panel-default">
+        <div class="panel-heading">
+            <strong class="panel-title">CPU</strong>
+        </div>
+        <div class="panel-body" style="padding: 0;">
+            <table v-if="cpu && kvRows(cpu).length" class="table table-bordered table-condensed" style="margin-bottom: 0;">
+                <tbody>
+                    <tr v-for="row in kvRows(cpu)" :key="'cpu-' + row.k">
+                        <td style="width: 220px;">{{ row.k }}</td>
+                        <td>{{ row.v }}</td>
+                    </tr>
+                </tbody>
+            </table>
+            <p v-else class="text-muted" style="padding: 10px; margin: 0;">暂无数据</p>
+        </div>
+    </div>
+
+    <div class="panel panel-default">
+        <div class="panel-heading">
+            <strong class="panel-title">操作系统 / 主机</strong>
+        </div>
+        <div class="panel-body" style="padding: 0;">
+            <p v-if="hostError" class="text-warning" style="padding: 10px; margin: 0;">host：{{ hostError }}</p>
+            <table v-if="host && hostKvRows(host).length" class="table table-bordered table-condensed" style="margin-bottom: 0;">
+                <thead>
+                    <tr><th colspan="2">host（gopsutil）</th></tr>
+                </thead>
+                <tbody>
+                    <tr v-for="row in hostKvRows(host)" :key="'host-' + row.k">
+                        <td style="width: 220px;">{{ row.k }}</td>
+                        <td>{{ row.v }}</td>
+                    </tr>
+                </tbody>
+            </table>
+            <table v-if="osRuntime && kvRows(osRuntime).length" class="table table-bordered table-condensed" style="margin-bottom: 0;">
+                <thead>
+                    <tr><th colspan="2">Go runtime</th></tr>
+                </thead>
+                <tbody>
+                    <tr v-for="row in kvRows(osRuntime)" :key="'os-' + row.k">
+                        <td style="width: 220px;">{{ row.k }}</td>
+                        <td>{{ row.v }}</td>
+                    </tr>
+                </tbody>
+            </table>
+            <p v-if="!host && !osRuntime && !hostError" class="text-muted" style="padding: 10px; margin: 0;">暂无数据</p>
+        </div>
+    </div>
+
+    <div class="panel panel-default">
+        <div class="panel-heading">
+            <strong class="panel-title">磁盘</strong>
+        </div>
+        <div class="panel-body">
+            <p v-if="diskPartitionsError" class="text-danger" style="margin-bottom: 10px;">{{ diskPartitionsError }}</p>
+            <div v-if="diskPartitions && diskPartitions.length" style="margin-bottom: 16px;">
+                <p class="text-muted" style="font-size: 12px; margin-bottom: 6px;">
+                    分区用量（gopsutil JSON，已过滤 tmpfs / overlay / shm，以及挂载点含 kubelet、k3s）
+                </p>
+                <div class="table-responsive">
+                    <table class="table table-condensed table-bordered table-striped" style="margin-bottom: 0; font-size: 12px;">
+                        <thead>
+                            <tr>
+                                <th>设备</th>
+                                <th>挂载点</th>
+                                <th>类型</th>
+                                <th>总量</th>
+                                <th>已用</th>
+                                <th>可用</th>
+                                <th style="min-width: 120px;">使用率</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-for="(row, dpi) in diskPartitions" :key="'dp-' + dpi">
+                                <td style="word-break: break-all;">{{ row.device }}</td>
+                                <td><code>{{ row.mountpoint }}</code></td>
+                                <td>
+                                    <span v-if="row.fstype" class="label label-default">{{ row.fstype }}</span>
+                                    <span v-else class="text-muted">—</span>
+                                </td>
+                                <td>{{ formatBytes(row.total) }}</td>
+                                <td>{{ formatBytes(row.used) }}</td>
+                                <td>{{ formatBytes(row.free) }}</td>
+                                <td>
+                                    <div class="progress" style="height: 16px; margin-bottom: 2px;">
+                                        <div class="progress-bar" role="progressbar"
+                                            :class="diskBarClass(row.usedPercent)"
+                                            :style="{ width: diskBarWidth(row.usedPercent) }"></div>
+                                    </div>
+                                    <small>{{ diskPercentText(row.usedPercent) }}</small>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</template>
+
+<script>
+    window.VueObject = {
+        data() {
+            return {
+                loading: false,
+                loadError: '',
+                library: '',
+                cpu: null,
+                host: null,
+                hostError: '',
+                osRuntime: null,
+                disks: [],
+                diskPartitions: [],
+                diskPartitionsError: '',
+            }
+        },
+        template: '#template',
+        mounted() {
+            this.loadInfo()
+        },
+        methods: {
+            formatBytes(n) {
+                if (n === null || n === undefined || n === '') {
+                    return '—'
+                }
+                const x = Number(n)
+                if (isNaN(x) || x < 0) {
+                    return String(n)
+                }
+                const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
+                let v = x
+                let i = 0
+                while (v >= 1024 && i < units.length - 1) {
+                    v /= 1024
+                    i++
+                }
+                const s = (i === 0 ? String(Math.round(v)) : v.toFixed(2))
+                return s + ' ' + units[i]
+            },
+            rawByteHint(n) {
+                const x = Number(n)
+                if (isNaN(x)) {
+                    return '—'
+                }
+                return x.toLocaleString('zh-CN') + ' 字节'
+            },
+            formatInt(n) {
+                const x = Number(n)
+                if (isNaN(x)) {
+                    return String(n)
+                }
+                return x.toLocaleString('zh-CN')
+            },
+            formatUptimeSeconds(sec) {
+                const s = Math.floor(Number(sec) || 0)
+                if (s < 1) {
+                    return '小于 1 秒'
+                }
+                const days = Math.floor(s / 86400)
+                const hours = Math.floor((s % 86400) / 3600)
+                const minutes = Math.floor((s % 3600) / 60)
+                const seconds = s % 60
+                if (days > 0) {
+                    return days + ' 天 ' + hours + ' 小时 ' + minutes + ' 分'
+                }
+                if (hours > 0) {
+                    return hours + ' 小时 ' + minutes + ' 分'
+                }
+                if (minutes > 0) {
+                    return minutes + ' 分 ' + seconds + ' 秒'
+                }
+                return seconds + ' 秒'
+            },
+            formatUnixTime(ts) {
+                const n = Math.floor(Number(ts) || 0)
+                if (n < 1) {
+                    return '—'
+                }
+                try {
+                    return new Date(n * 1000).toLocaleString('zh-CN', { hour12: false })
+                } catch (e) {
+                    return String(ts)
+                }
+            },
+            hostKvRows(host) {
+                if (!host) {
+                    return []
+                }
+                const rows = this.kvRows(host)
+                const out = []
+                for (let i = 0; i < rows.length; i++) {
+                    const row = rows[i]
+                    if (row.k === 'uptime') {
+                        const sec = Number(row.v)
+                        if (!isNaN(sec) && sec >= 0) {
+                            out.push({
+                                k: 'uptime',
+                                v: this.formatUptimeSeconds(sec) + '（约 ' + this.formatInt(sec) + ' 秒）',
+                            })
+                            continue
+                        }
+                    }
+                    if (row.k === 'bootTime') {
+                        const ts = Number(row.v)
+                        if (!isNaN(ts) && ts > 0) {
+                            out.push({
+                                k: 'bootTime',
+                                v: this.formatUnixTime(ts) + '（Unix ' + ts + '）',
+                            })
+                            continue
+                        }
+                    }
+                    out.push(row)
+                }
+                return out
+            },
+            diskBarWidth(pct) {
+                const n = Math.min(100, Math.max(0, Number(pct) || 0))
+                return n + '%'
+            },
+            diskPercentText(pct) {
+                const n = Number(pct)
+                if (isNaN(n)) {
+                    return '—'
+                }
+                return n.toFixed(1) + '%'
+            },
+            diskBarClass(pct) {
+                const n = Number(pct)
+                if (isNaN(n)) {
+                    return ''
+                }
+                if (n >= 90) {
+                    return 'progress-bar-danger'
+                }
+                if (n >= 75) {
+                    return 'progress-bar-warning'
+                }
+                return 'progress-bar-info'
+            },
+            inodePercentText(d) {
+                const n = Number(d.inodesUsedPercent)
+                if (!isNaN(n)) {
+                    return n.toFixed(1) + '%'
+                }
+                const u = Number(d.inodesUsed)
+                const t = Number(d.inodesTotal)
+                if (t > 0 && !isNaN(u)) {
+                    return ((100 * u) / t).toFixed(1) + '%'
+                }
+                return '—'
+            },
+            kvRows(obj) {
+                if (!obj || typeof obj !== 'object') {
+                    return []
+                }
+                const keys = Object.keys(obj).sort()
+                const out = []
+                for (let i = 0; i < keys.length; i++) {
+                    const k = keys[i]
+                    let v = obj[k]
+                    if (v === null || v === undefined) {
+                        v = ''
+                    } else if (typeof v === 'object') {
+                        try {
+                            v = JSON.stringify(v)
+                        } catch (e) {
+                            v = String(v)
+                        }
+                    } else {
+                        v = String(v)
+                    }
+                    out.push({ k, v })
+                }
+                return out
+            },
+            async loadInfo() {
+                this.loading = true
+                this.loadError = ''
+                try {
+                    const res = await axios.get('/api/system/info')
+                    if (!res.data || res.data.code !== 0) {
+                        this.loadError = (res.data && res.data.message) ? res.data.message : '接口返回异常'
+                        this.cpu = null
+                        this.host = null
+                        this.osRuntime = null
+                        this.disks = []
+                        this.library = ''
+                        this.hostError = ''
+                        this.diskPartitions = []
+                        this.diskPartitionsError = ''
+                        return
+                    }
+                    const d = res.data.data || {}
+                    this.library = d.library || ''
+                    this.cpu = d.cpu || null
+                    this.host = d.host || null
+                    this.hostError = d.host_error ? String(d.host_error) : ''
+                    const dp = d.disk_partitions
+                    this.diskPartitions = Array.isArray(dp) ? dp : []
+                    this.diskPartitionsError = d.disk_partitions_error ? String(d.disk_partitions_error) : ''
+                    const os = d.os || null
+                    if (os && typeof os === 'object') {
+                        const copy = {}
+                        Object.keys(os).forEach(function (key) {
+                            copy[key] = os[key]
+                        })
+                        this.osRuntime = copy
+                    } else {
+                        this.osRuntime = null
+                    }
+                    const diskArr = d.disk
+                    this.disks = Array.isArray(diskArr) ? diskArr : []
+                } catch (e) {
+                    this.loadError = e && e.message ? e.message : String(e)
+                    this.cpu = null
+                    this.host = null
+                    this.osRuntime = null
+                    this.disks = []
+                    this.library = ''
+                    this.hostError = ''
+                    this.diskPartitions = []
+                    this.diskPartitionsError = ''
+                } finally {
+                    this.loading = false
+                }
+            },
+        },
+    }
+</script>

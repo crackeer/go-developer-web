@@ -1,0 +1,1072 @@
+<template id="template">
+    <div class="well" style="margin-bottom: 10px;">
+        <div class="clearfix" style="margin-bottom: 6px;">
+            <button class="btn btn-sm btn-primary" @click="refreshAll" :disabled="loading">
+                {{loading ? '加载中...' : '刷新镜像数据'}}
+            </button>
+            <button class="btn btn-sm btn-success" style="margin-left: 8px;" @click="openUploadModal"
+                :disabled="loading || nodeList.length < 1">
+                上传镜像
+            </button>
+            <a class="btn btn-sm btn-default" style="margin-left: 8px;" href="/ssh/server" target="_blank">SSH 服务器管理</a>
+            <span style="margin-left: 12px; color: #999;" v-if="nodeList.length">
+                共 <strong>{{nodeList.length}}</strong> 个节点，
+                <strong>{{mergedImages.length}}</strong> 个镜像
+            </span>
+        </div>
+        <div class="form-group" style="margin-bottom: 0; margin-top: 8px;">
+            <label style="margin-right: 8px;">检索：</label>
+            <input type="text" class="form-control" v-model="searchText" placeholder="输入镜像名称关键字搜索..."
+                style="width: 320px; display: inline-block;" />
+            <button v-if="searchText" class="btn btn-default btn-sm" style="margin-left: 8px;"
+                @click="searchText = ''">重置</button>
+            <label style="margin-left: 20px; font-weight: normal;">
+                <input type="checkbox" v-model="onlyShowDiff" /> 仅显示有差异的镜像
+            </label>
+        </div>
+    </div>
+
+    <div v-if="loadErrors.length" class="alert alert-warning" style="margin-bottom: 10px;">
+        <strong>部分节点加载失败：</strong>
+        <div v-for="(e, i) in loadErrors" :key="i">{{e}}</div>
+    </div>
+
+    <div v-if="downloadMsg" class="alert" style="margin-bottom: 10px;"
+        :class="downloadMsgType === 'danger' ? 'alert-danger' : (downloadMsgType === 'success' ? 'alert-success' : 'alert-info')">
+        <span v-if="downloading" class="glyphicon glyphicon-refresh"
+            style="animation: spin 1s linear infinite; margin-right: 4px;"></span>
+        {{downloadMsg}}
+    </div>
+
+    <div v-if="loading" style="text-align: center; padding: 40px 0; color: #999;">
+        <p>正在从各节点获取镜像数据，请稍候...</p>
+        <p v-if="loadProgress">{{loadProgress}}</p>
+    </div>
+
+    <div v-if="!loading && mergedImages.length > 0" class="table-responsive">
+        <table class="table table-bordered table-condensed table-hover">
+            <thead>
+                <tr>
+                    <th style="width: 50px;">#</th>
+                    <th>镜像名称</th>
+                    <th style="width: 140px;">NodeIP</th>
+                    <th>ImageID</th>
+                    <th>分支(BranchCommit)</th>
+                    <th>Size</th>
+                    <th style="width: 90px;">状态</th>
+                    <th style="width: 150px;">操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                <template v-for="(img, i) in filteredImages">
+                    <tr v-for="(detail, j) in img.nodeDetails" :key="img.key + '-' + j">
+                        <td v-if="j === 0" :rowspan="img.nodeDetails.length"
+                            style="vertical-align: middle;">{{i + 1}}</td>
+                        <td v-if="j === 0" :rowspan="img.nodeDetails.length"
+                            style="word-break: break-all; vertical-align: middle;">{{img.name}}:{{img.tag}}</td>
+                        <td>
+                            <span>{{detail.nodeIP}}</span>
+                        </td>
+                        <td style="word-break: break-all;">
+                            <span v-if="detail.exists">{{detail.imageID}}</span>
+                            <span v-else class="text-danger">镜像不存在</span>
+                        </td>
+                        <td style="word-break: break-all;">
+                            <span v-if="!detail.exists" class="text-muted">-</span>
+                            <span v-else-if="detail.branchLoading" class="text-muted">
+                                <span class="glyphicon glyphicon-refresh"
+                                    style="animation: spin 1s linear infinite;"></span>
+                            </span>
+                            <span v-else>{{detail.branchCommit || '-'}}</span>
+                        </td>
+                        <td>
+                            <span v-if="detail.exists">{{detail.size || '-'}}</span>
+                            <span v-else class="text-muted">-</span>
+                        </td>
+                        <td v-if="j === 0" :rowspan="img.nodeDetails.length"
+                            style="vertical-align: middle;">
+                            <span v-if="img.diffType === 'consistent'" class="label label-success">一致</span>
+                            <span v-else-if="img.diffType === 'id_mismatch'" class="label label-warning">ID不一致</span>
+                            <span v-else-if="img.diffType === 'missing'" class="label label-danger">部分缺失</span>
+                        </td>
+                        <td v-if="j === 0" :rowspan="img.nodeDetails.length"
+                            style="vertical-align: middle;">
+                            <button class="btn btn-xs btn-default" :disabled="downloading || uploading || inspecting"
+                                @click="startInspect(img)">详情</button>
+                            <button class="btn btn-xs btn-default" style="margin-left: 4px;"
+                                :disabled="downloading || uploading || inspecting"
+                                @click="startDownload(img)">下载</button>
+                        </td>
+                    </tr>
+                </template>
+                <tr v-if="filteredImages.length < 1">
+                    <td colspan="8" style="text-align: center; color: #999;">暂无数据</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div v-if="!loading && !sshLoading && !sshError && nodeList.length < 1"
+        class="alert alert-info" style="margin: 10px 0;">
+        尚未配置 SSH 服务器，请先前往 <a href="/ssh/server" target="_blank">SSH 服务器管理</a> 添加
+    </div>
+    <div v-if="sshError" class="alert alert-warning" style="margin: 10px 0;">{{sshError}}</div>
+
+    <div v-if="!loading && mergedImages.length < 1 && nodeList.length > 0"
+        style="text-align: center; padding: 40px 0; color: #999;">
+        暂无镜像数据
+    </div>
+
+    <!-- 镜像 inspect 结果 Modal -->
+    <div class="modal fade" id="inspectModal" tabindex="-1" role="dialog">
+        <div class="modal-dialog modal-lg" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <button type="button" class="close" data-dismiss="modal"><span
+                            aria-hidden="true">&times;</span></button>
+                    <h4 class="modal-title" style="word-break: break-all;">
+                        镜像 inspect：{{inspectImage ? inspectImage.name + ':' + inspectImage.tag : ''}}
+                    </h4>
+                </div>
+                <div class="modal-body">
+                    <!-- NodeIP 切换 -->
+                    <div style="margin-bottom: 10px;">
+                        <label style="margin-right: 8px;">节点：</label>
+                        <label v-for="r in inspectResults" :key="r.nodeIP" class="radio-inline">
+                            <input type="radio" name="inspectNodeIP" :value="r.nodeIP"
+                                v-model="inspectNodeIP" @change="renderInspect" />
+                            <span class="label"
+                                :class="r.error ? 'label-danger' : 'label-info'">{{r.nodeIP}}</span>
+                        </label>
+                    </div>
+                    <div v-if="currentInspectError" class="alert alert-danger" style="margin-bottom: 10px;">
+                        {{currentInspectError}}
+                    </div>
+                    <!-- JSON 编辑器容器（始终渲染，Modal 显示后再初始化并 set 数据） -->
+                    <div id="inspectJSONEditor" v-show="!currentInspectError" style="height: 60vh;"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-default" data-dismiss="modal">关闭</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 选择下载节点 Modal -->
+    <div class="modal fade" id="downloadNodeModal" tabindex="-1" role="dialog">
+        <div class="modal-dialog" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <button type="button" class="close" data-dismiss="modal"><span
+                            aria-hidden="true">&times;</span></button>
+                    <h4 class="modal-title">选择下载节点</h4>
+                </div>
+                <div class="modal-body">
+                    <p style="word-break: break-all;">镜像：<strong>{{downloadImage ? downloadImage.name + ':' + downloadImage.tag : ''}}</strong></p>
+                    <div v-for="ip in downloadNodeIPs" :key="ip" class="radio">
+                        <label>
+                            <input type="radio" name="downloadNodeIP" :value="ip" v-model="downloadNodeIP" /> {{ip}}
+                        </label>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-default" data-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" @click="confirmDownloadNode"
+                        :disabled="!downloadNodeIP">开始下载</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 上传镜像 Modal -->
+    <div class="modal fade" id="uploadImageModal" tabindex="-1" role="dialog">
+        <div class="modal-dialog modal-lg" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <button type="button" class="close" data-dismiss="modal" :disabled="uploading"><span
+                            aria-hidden="true">&times;</span></button>
+                    <h4 class="modal-title">上传镜像到节点</h4>
+                </div>
+                <div class="modal-body">
+                    <!-- 选择文件 -->
+                    <div class="form-group">
+                        <label>选择镜像文件（支持多个 .tar 文件）</label>
+                        <input type="file" class="form-control" multiple accept=".tar" ref="uploadFileInput"
+                            @change="onUploadFileChange" :disabled="uploading" />
+                    </div>
+
+                    <!-- 已选文件列表 -->
+                    <div v-if="uploadFiles.length" style="margin-bottom: 10px;">
+                        <strong>已选文件：</strong>
+                        <span v-for="(f, i) in uploadFiles" :key="i" class="label label-default"
+                            style="margin-right: 6px;">
+                            {{f.name}} ({{formatFileSize(f.size)}})
+                        </span>
+                    </div>
+
+                    <!-- 上传任务表格 -->
+                    <div v-if="uploadTasks.length" class="table-responsive">
+                        <table class="table table-bordered table-condensed">
+                            <thead>
+                                <tr>
+                                    <th style="width: 50px;">#</th>
+                                    <th style="width: 160px;">NodeIP</th>
+                                    <th>File</th>
+                                    <th style="width: 320px;">状态</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="(task, i) in uploadTasks" :key="i"
+                                    :class="{'danger': task.status === 'failed', 'success': task.status === 'done'}">
+                                    <td>{{i + 1}}</td>
+                                    <td>{{task.nodeIP}}</td>
+                                    <td style="word-break: break-all;">{{task.fileName}}</td>
+                                    <td>
+                                        <!-- 等待中 -->
+                                        <span v-if="task.status === 'pending'" class="text-muted">等待中</span>
+                                        <!-- 上传中：进度条 -->
+                                        <div v-else-if="task.status === 'uploading'">
+                                            <div class="progress" style="margin-bottom: 2px; height: 18px;">
+                                                <div class="progress-bar progress-bar-info progress-bar-striped active"
+                                                    role="progressbar"
+                                                    :style="{width: task.progress + '%'}"
+                                                    style="min-width: 30px; line-height: 18px; font-size: 12px;">
+                                                    {{task.progress}}%
+                                                </div>
+                                            </div>
+                                            <small class="text-muted">上传中...</small>
+                                        </div>
+                                        <!-- 导入中 -->
+                                        <span v-else-if="task.status === 'importing'" class="text-info">
+                                            <span class="glyphicon glyphicon-refresh"
+                                                style="animation: spin 1s linear infinite;"></span>
+                                            导入中...
+                                        </span>
+                                        <!-- 完成 -->
+                                        <span v-else-if="task.status === 'done'" class="text-success">
+                                            <span class="glyphicon glyphicon-ok"></span> 完成
+                                        </span>
+                                        <!-- 失败 -->
+                                        <div v-else-if="task.status === 'failed'">
+                                            <span class="text-danger">
+                                                <span class="glyphicon glyphicon-remove"></span>
+                                                失败：{{task.error}}
+                                            </span>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- 上传完成统计 -->
+                    <div v-if="uploadFinished" class="alert" style="margin-bottom: 0;"
+                        :class="uploadHasError ? 'alert-warning' : 'alert-success'">
+                        上传完成：成功 <strong>{{uploadSuccessCount}}</strong> 个，
+                        失败 <strong>{{uploadFailCount}}</strong> 个
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-default" data-dismiss="modal"
+                        :disabled="uploading">关闭</button>
+                    <button type="button" class="btn btn-primary" @click="startUpload"
+                        :disabled="uploading || uploadFiles.length < 1 || nodeList.length < 1">
+                        {{uploading ? '上传中...' : '开始上传'}}
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</template>
+
+<style>
+    @keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+    }
+</style>
+
+<script>
+    // 需要获取分支(BranchCommit)的业务镜像列表，只对这些镜像执行 crictl inspecti
+    const businessImages = [
+        // 在此填写常用镜像
+    ]
+    // 归一化为匹配集合：同时收录完整名与去掉 docker.io/library/ 前缀的形式，兼容后端返回的短名
+    const businessImageSet = (function () {
+        const set = {}
+        for (let i = 0; i < businessImages.length; i++) {
+            const full = businessImages[i]
+            set[full] = true
+            set[full.replace(/^docker\.io\/library\//, '')] = true
+        }
+        return set
+    })()
+    window.VueObject = {
+        data() {
+            return {
+                nodeImageMap: {},
+                mergedImages: [],
+                loading: false,
+                pendingRefresh: false,
+                loadProgress: '',
+                loadErrors: [],
+                searchText: '',
+                onlyShowDiff: false,
+                // 上传相关
+                uploadFiles: [],
+                uploadTasks: [],
+                uploading: false,
+                uploadFinished: false,
+                // 下载相关
+                downloading: false,
+                downloadImage: null,
+                downloadNodeIPs: [],
+                downloadNodeIP: '',
+                downloadMsg: '',
+                downloadMsgType: 'info',
+                // inspect 相关
+                inspecting: false,
+                inspectImage: null,
+                inspectResults: [],   // [{ nodeIP, json, error }]
+                inspectNodeIP: '',
+                // SSH 服务器
+                sshServers: [],
+                sshRecordId: null,
+                sshLoading: false,
+                sshError: '',
+            }
+        },
+        template: '#template',
+        computed: {
+            // 节点列表直接来自 SSH 服务器 Table：host 作为 nodeIP 及显示名
+            nodeList() {
+                return this.sshServers.filter(function (s) { return s.host }).map(function (s) {
+                    return { host: s.host, internal_ip: s.host }
+                })
+            },
+            filteredImages() {
+                let list = this.mergedImages
+                const keyword = (this.searchText || '').trim().toLowerCase()
+                if (keyword) {
+                    list = list.filter(function (img) {
+                        return (img.name || '').toLowerCase().indexOf(keyword) >= 0 ||
+                            (img.tag || '').toLowerCase().indexOf(keyword) >= 0
+                    })
+                }
+                if (this.onlyShowDiff) {
+                    list = list.filter(function (img) {
+                        return img.diffType !== 'consistent'
+                    })
+                }
+                return list
+            },
+            currentInspectError() {
+                for (let i = 0; i < this.inspectResults.length; i++) {
+                    if (this.inspectResults[i].nodeIP === this.inspectNodeIP) {
+                        return this.inspectResults[i].error || ''
+                    }
+                }
+                return ''
+            },
+            uploadSuccessCount() {
+                let count = 0
+                for (let i = 0; i < this.uploadTasks.length; i++) {
+                    if (this.uploadTasks[i].status === 'done') count++
+                }
+                return count
+            },
+            uploadFailCount() {
+                let count = 0
+                for (let i = 0; i < this.uploadTasks.length; i++) {
+                    if (this.uploadTasks[i].status === 'failed') count++
+                }
+                return count
+            },
+            uploadHasError() {
+                return this.uploadFailCount > 0
+            },
+        },
+        async mounted() {
+            await this.refreshAll()
+        },
+        methods: {
+            // 通过通用 api/mysql 查询 vrapi.strategy 中 customize_deploy/ssh_config 记录
+            async fetchSshRecord() {
+                const resp = await axios.post('/api/mysql/query/vrapi/strategy', {
+                    page: 1, page_size: 1,
+                    where: { name: 'customize_deploy', '`key`': 'ssh_config' },
+                })
+                if (!resp.data || resp.data.code !== 0) {
+                    throw new Error((resp.data && resp.data.message) || '查询失败')
+                }
+                const rows = resp.data.data || []
+                if (rows.length < 1) return { id: null, raw: {}, nodes: {} }
+                const value = rows[0].value
+                if (!value) return { id: rows[0].id, raw: {}, nodes: {} }
+                let raw
+                try {
+                    raw = JSON.parse(value)
+                } catch (e) {
+                    throw new Error('ssh_config 解析失败')
+                }
+                if (!raw || typeof raw !== 'object') throw new Error('ssh_config 解析失败')
+                return { id: rows[0].id, raw: raw, nodes: raw.nodes || {} }
+            },
+            async loadSshServers() {
+                this.sshLoading = true
+                this.sshError = ''
+                try {
+                    const rec = await this.fetchSshRecord()
+                    this.sshRecordId = rec.id
+                    const nodes = rec.nodes
+                    this.sshServers = Object.keys(nodes).map(function (host) {
+                        const n = nodes[host] || {}
+                        return {
+                            host: host, port: n.port || '', user: n.user || '',
+                            password: n.password || '',
+                        }
+                    })
+                    return true
+                } catch (e) {
+                    this.sshError = '获取 SSH 服务器列表失败：' + (e && e.message ? e.message : String(e))
+                    return false
+                } finally {
+                    this.sshLoading = false
+                }
+            },
+            async refreshAll() {
+                if (this.loading) {
+                    // 正在加载时发生了 SSH 服务器变更，加载结束后再刷新一次
+                    this.pendingRefresh = true
+                    return
+                }
+                this.loading = true
+                this.loadErrors = []
+                this.loadProgress = ''
+                this.mergedImages = []
+                this.nodeImageMap = {}
+
+                try {
+                    this.loadProgress = '正在获取 SSH 服务器列表...'
+                    const ok = await this.loadSshServers()
+                    if (!ok) {
+                        // 错误已显示在 SSH 区域（sshError）
+                        return
+                    }
+                    if (this.nodeList.length < 1) {
+                        // 空列表由页面提示引导添加 SSH 服务器，不算错误
+                        return
+                    }
+
+                    const nodeIPs = []
+                    for (let i = 0; i < this.nodeList.length; i++) {
+                        const ip = this.nodeList[i].internal_ip
+                        if (ip) nodeIPs.push(ip)
+                    }
+
+                    this.loadProgress = '正在从 ' + nodeIPs.length + ' 个节点获取镜像...'
+                    const promises = []
+                    for (let i = 0; i < nodeIPs.length; i++) {
+                        promises.push(this.fetchNodeImages(nodeIPs[i]))
+                    }
+                    await Promise.all(promises)
+
+                    this.loadProgress = '正在对比镜像差异...'
+                    this.mergedImages = this.buildMergedImages(nodeIPs)
+                    // 异步获取各镜像的分支信息（BranchCommit），不阻塞表格渲染
+                    this.loadBranchCommits()
+                } catch (e) {
+                    this.loadErrors.push('加载失败：' + (e && e.message ? e.message : String(e)))
+                } finally {
+                    this.loading = false
+                    this.loadProgress = ''
+                    if (this.pendingRefresh) {
+                        this.pendingRefresh = false
+                        this.refreshAll()
+                    }
+                }
+            },
+
+            async fetchNodeImages(nodeIP) {
+                try {
+                    const resp = await axios.get('/api/k3s/image/list', {
+                        params: { nodeIP: nodeIP },
+                    })
+                    if (!resp.data || resp.data.code !== 0) {
+                        this.loadErrors.push(nodeIP + '：' + ((resp.data && resp.data.message) || '获取失败'))
+                        this.nodeImageMap[nodeIP] = []
+                        return
+                    }
+                    this.nodeImageMap[nodeIP] = resp.data.data || []
+                } catch (e) {
+                    this.loadErrors.push(nodeIP + '：' + (e && e.message ? e.message : String(e)))
+                    this.nodeImageMap[nodeIP] = []
+                }
+            },
+
+            buildMergedImages(nodeIPs) {
+                const allKeys = {}
+                for (let n = 0; n < nodeIPs.length; n++) {
+                    const ip = nodeIPs[n]
+                    const images = this.nodeImageMap[ip] || []
+                    for (let i = 0; i < images.length; i++) {
+                        const img = images[i]
+                        const key = (img.name || '') + ':' + (img.tag || '')
+                        if (!allKeys[key]) {
+                            allKeys[key] = { name: img.name || '', tag: img.tag || '' }
+                        }
+                    }
+                }
+
+                const result = []
+                const sortedKeys = Object.keys(allKeys).sort()
+                for (let k = 0; k < sortedKeys.length; k++) {
+                    const key = sortedKeys[k]
+                    const info = allKeys[key]
+                    const nodeDetails = []
+                    const imageIDs = {}
+                    let existCount = 0
+                    let missingCount = 0
+
+                    for (let n = 0; n < nodeIPs.length; n++) {
+                        const ip = nodeIPs[n]
+                        const images = this.nodeImageMap[ip] || []
+                        let found = null
+                        for (let i = 0; i < images.length; i++) {
+                            const img = images[i]
+                            const imgKey = (img.name || '') + ':' + (img.tag || '')
+                            if (imgKey === key) {
+                                found = img
+                                break
+                            }
+                        }
+                        if (found) {
+                            existCount++
+                            const id = found.image_id || ''
+                            imageIDs[id] = true
+                            nodeDetails.push({
+                                nodeIP: ip,
+                                exists: true,
+                                imageID: id,
+                                size: found.size || '',
+                                branchCommit: '',
+                                branchLoading: false,
+                            })
+                        } else {
+                            missingCount++
+                            nodeDetails.push({
+                                nodeIP: ip,
+                                exists: false,
+                                imageID: '',
+                                size: '',
+                                branchCommit: '',
+                                branchLoading: false,
+                            })
+                        }
+                    }
+
+                    let diffType = 'consistent'
+                    let consistentImageID = ''
+                    let consistentSize = ''
+                    const uniqueIDs = Object.keys(imageIDs)
+
+                    if (missingCount > 0) {
+                        diffType = 'missing'
+                    } else if (uniqueIDs.length > 1) {
+                        diffType = 'id_mismatch'
+                    } else {
+                        consistentImageID = uniqueIDs.length > 0 ? uniqueIDs[0] : ''
+                        for (let d = 0; d < nodeDetails.length; d++) {
+                            if (nodeDetails[d].exists && nodeDetails[d].size) {
+                                consistentSize = nodeDetails[d].size
+                                break
+                            }
+                        }
+                    }
+
+                    result.push({
+                        key: key,
+                        name: info.name,
+                        tag: info.tag,
+                        diffType: diffType,
+                        consistentImageID: consistentImageID,
+                        consistentSize: consistentSize,
+                        nodeDetails: nodeDetails,
+                    })
+                }
+
+                result.sort(function (a, b) {
+                    const order = { missing: 0, id_mismatch: 1, consistent: 2 }
+                    const oa = order[a.diffType] != null ? order[a.diffType] : 3
+                    const ob = order[b.diffType] != null ? order[b.diffType] : 3
+                    if (oa !== ob) return oa - ob
+                    return a.key.localeCompare(b.key)
+                })
+
+                return result
+            },
+
+            // ========== 分支(BranchCommit) 相关 ==========
+
+            // 为每个镜像在所有拥有该镜像的节点上分别获取 BranchCommit：
+            // 对每个存在该镜像的节点执行 crictl inspecti，从 info.imageSpec.config.Labels.BranchCommit 读取。
+            // 分支信息来自镜像构建时打入的 Label。并发执行，逐个回填，失败或缺失显示 '-'。
+            async loadBranchCommits() {
+                const self = this
+                const images = this.mergedImages
+                const tasks = []
+                for (let i = 0; i < images.length; i++) {
+                    const img = images[i]
+                    const ref = img.name + ':' + img.tag
+                    // 仅获取 businessImages 列表内的镜像分支，其余镜像不查询
+                    if (!businessImageSet[ref] && !businessImageSet[img.name]) {
+                        for (let d = 0; d < img.nodeDetails.length; d++) {
+                            img.nodeDetails[d].branchCommit = '-'
+                        }
+                        continue
+                    }
+                    for (let d = 0; d < img.nodeDetails.length; d++) {
+                        const detail = img.nodeDetails[d]
+                        if (!detail.exists) {
+                            detail.branchCommit = '-'
+                            continue
+                        }
+                        detail.branchLoading = true
+                        tasks.push(
+                            self.inspectOnNode(detail.nodeIP, ref).then(function (res) {
+                                detail.branchCommit = res && res.json
+                                    ? self.extractBranchCommit(res.json)
+                                    : '-'
+                                detail.branchLoading = false
+                            }).catch(function () {
+                                detail.branchCommit = '-'
+                                detail.branchLoading = false
+                            })
+                        )
+                    }
+                }
+                await Promise.all(tasks)
+            },
+
+            // 从 crictl inspecti 的 JSON 中提取 BranchCommit：info.imageSpec.config.Labels.BranchCommit
+            extractBranchCommit(json) {
+                try {
+                    const imageSpec = (((json || {}).info || {}).imageSpec) || {}
+                    const cfg = imageSpec.config || {}
+                    const labels = cfg.Labels
+                    if (labels && labels.BranchCommit) {
+                        return String(labels.BranchCommit)
+                    }
+                } catch (e) { }
+                return '-'
+            },
+
+            // ========== inspect 相关 ==========
+
+            // 点击「inspect」：对每个 SSH 节点并发执行 crictl inspecti，弹出 Modal 用 JSON 编辑器展示，
+            // 支持 radio 切换 NodeIP 查看。某个节点失败不影响其他节点，在该节点下展示错误信息。
+            async startInspect(img) {
+                if (this.inspecting) return
+                this.inspecting = true
+                this.inspectImage = img
+                this.inspectResults = []
+                this.inspectNodeIP = ''
+                const ref = img.name + ':' + img.tag
+                bootboxLoading('在各节点执行 inspect 中...<br/><small class="text-muted">'
+                    + this.escapeHtml(ref) + '</small>')
+
+                const nodeIPs = []
+                for (let i = 0; i < this.nodeList.length; i++) {
+                    const ip = this.nodeList[i].internal_ip
+                    if (ip) nodeIPs.push(ip)
+                }
+
+                const self = this
+                const tasks = nodeIPs.map(function (nodeIP) {
+                    return self.inspectOnNode(nodeIP, ref)
+                })
+                const results = await Promise.all(tasks)
+                this.inspectResults = results
+
+                bootbox.hideAll()
+                this.inspecting = false
+
+                if (results.length < 1) {
+                    bootbox.alert('没有可用的节点')
+                    return
+                }
+                // 默认选中第一个成功的节点，没有成功的则选第一个
+                let selected = results[0].nodeIP
+                for (let i = 0; i < results.length; i++) {
+                    if (!results[i].error) { selected = results[i].nodeIP; break }
+                }
+                this.inspectNodeIP = selected
+
+                const modalEl = this
+                $('#inspectModal').off('shown.bs.modal.inspect').on('shown.bs.modal.inspect', function () {
+                    modalEl.renderInspect()
+                })
+                $('#inspectModal').modal('show')
+            },
+
+            // 在单个节点上执行 inspect，返回 { nodeIP, json, error }
+            async inspectOnNode(nodeIP, ref) {
+                try {
+                    const resp = await axios.post('/api/ssh/exec', {
+                        host: nodeIP,
+                        command: 'crictl inspecti ' + this.shellQuote(ref),
+                    })
+                    if (!resp.data || resp.data.code !== 0) {
+                        throw new Error((resp.data && resp.data.message) || 'inspect 失败')
+                    }
+                    const output = (resp.data.data && resp.data.data.output) || ''
+                    const json = this.extractJSON(output)
+                    if (json === null) {
+                        return {
+                            nodeIP: nodeIP, json: null,
+                            error: '[' + nodeIP + '] inspect 输出不是合法 JSON。原始输出：\n' + output.slice(0, 2000),
+                        }
+                    }
+                    return { nodeIP: nodeIP, json: json, error: '' }
+                } catch (e) {
+                    return { nodeIP: nodeIP, json: null, error: (e && e.message ? e.message : String(e)) }
+                }
+            },
+
+            // 从命令输出中提取 JSON：crictl inspecti 的 stdout 可能前后夹杂日志行
+            // （如连接 containerd 的提示），所以先整体 parse，失败再截取第一个 { 到最后一个 } 重试。
+            extractJSON(output) {
+                const text = (output || '').trim()
+                if (!text) return null
+                try {
+                    return JSON.parse(text)
+                } catch (e) { }
+                const start = text.indexOf('{')
+                const end = text.lastIndexOf('}')
+                if (start < 0 || end <= start) return null
+                try {
+                    return JSON.parse(text.slice(start, end + 1))
+                } catch (e) {
+                    return null
+                }
+            },
+
+            // 把当前选中节点的 inspect JSON 渲染到编辑器（Modal 显示后 DOM 容器才有尺寸）
+            renderInspect() {
+                let current = null
+                for (let i = 0; i < this.inspectResults.length; i++) {
+                    if (this.inspectResults[i].nodeIP === this.inspectNodeIP) {
+                        current = this.inspectResults[i]
+                        break
+                    }
+                }
+                if (!current || current.error) return
+                const editor = initJSONEditor('inspectJSONEditor', '{}')
+                editor.set(current.json || {})
+                try { editor.expandAll && editor.expandAll() } catch (e) { }
+            },
+
+            // ========== 下载相关 ==========
+
+            // 点击「下载」：候选节点为拥有该镜像的 SSH 服务器。
+            // 只有一个候选时直接确认；多个时弹出 Modal 选择 NodeIP。
+            startDownload(img) {
+                if (this.downloading) return
+                const candidates = []
+                for (let i = 0; i < img.nodeDetails.length; i++) {
+                    if (img.nodeDetails[i].exists) candidates.push(img.nodeDetails[i].nodeIP)
+                }
+                if (candidates.length < 1) {
+                    this.setDownloadMsg('danger', '没有节点拥有该镜像，无法下载')
+                    return
+                }
+                this.downloadImage = img
+                if (candidates.length === 1) {
+                    if (!confirm('确认从节点 ' + candidates[0] + ' 下载镜像 ' + img.name + ':' + img.tag + ' ？')) return
+                    this.runDownload(img, candidates[0])
+                    return
+                }
+                this.downloadNodeIPs = candidates
+                this.downloadNodeIP = ''
+                $('#downloadNodeModal').modal('show')
+            },
+
+            confirmDownloadNode() {
+                if (!this.downloadNodeIP || !this.downloadImage) return
+                const img = this.downloadImage
+                const nodeIP = this.downloadNodeIP
+                // 等选择节点的 Modal 完全关闭后再显示导出中的 Modal，避免两个 Modal 的动画互相干扰
+                const self = this
+                $('#downloadNodeModal').one('hidden.bs.modal', function () {
+                    self.runDownload(img, nodeIP)
+                }).modal('hide')
+            },
+
+            setDownloadMsg(type, msg) {
+                this.downloadMsgType = type
+                this.downloadMsg = msg
+            },
+
+            shellQuote(s) {
+                return "'" + String(s).replace(/'/g, "'\\''") + "'"
+            },
+
+            escapeHtml(s) {
+                return String(s).replace(/[&<>"']/g, function (c) {
+                    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+                })
+            },
+
+            // 二阶段下载：
+            //  1) /api/ssh/exec 在节点上执行 k3s ctr image export 导出为临时 tar（bootbox loading 展示导出中）
+            //  2) 导出成功后 bootbox 确认，确认后用浏览器打开 /api/ssh/download 链接下载
+            //     （delete=1：服务端下载结束后删除远端临时文件；取消则主动删除）
+            async runDownload(img, nodeIP) {
+                if (this.downloading) return
+                this.downloading = true
+                const ref = img.name + ':' + img.tag
+                const remoteFile = '/tmp/k3s-image-export-' + Date.now() + '-' + Math.random().toString(16).slice(2, 8) + '.tar'
+                const fileName = (img.name.split('/').pop() + '_' + img.tag).replace(/[^\w.\-]/g, '_') + '.tar'
+                let exported = false
+                try {
+                    this.setDownloadMsg('info', '[' + nodeIP + '] 正在导出镜像 ' + ref + '，请稍候...')
+                    bootboxLoading('从「' + this.escapeHtml(nodeIP) + '」导出镜像中...<br/><small class="text-muted">'
+                        + this.escapeHtml(ref) + '</small>')
+                    const resp = await axios.post('/api/ssh/exec', {
+                        host: nodeIP,
+                        command: 'k3s ctr image export ' + this.shellQuote(remoteFile) + ' ' + this.shellQuote(ref),
+                    })
+                    if (!resp.data || resp.data.code !== 0) {
+                        throw new Error((resp.data && resp.data.message) || '导出失败')
+                    }
+                    exported = true
+                } catch (e) {
+                    const msg = '[' + nodeIP + '] 导出镜像 ' + ref + ' 失败：' + (e && e.message ? e.message : String(e))
+                    this.setDownloadMsg('danger', msg)
+                    // 尽力清理可能残留的半截临时文件
+                    this.removeRemoteFile(nodeIP, remoteFile)
+                    bootbox.hideAll()
+                    bootbox.alert(this.escapeHtml(msg))
+                } finally {
+                    this.downloading = false
+                }
+                if (!exported) return
+
+                this.setDownloadMsg('success', '[' + nodeIP + '] 镜像 ' + ref + ' 导出成功，等待确认下载')
+                bootbox.hideAll()
+                const self = this
+                bootbox.confirm({
+                    title: '导出镜像成功',
+                    message: '导出镜像成功，是否确认下载？<br/><small class="text-muted">节点：' + this.escapeHtml(nodeIP)
+                        + '<br/>镜像：' + this.escapeHtml(ref) + '<br/>文件：' + this.escapeHtml(fileName) + '</small>',
+                    closeButton: false,
+                    buttons: {
+                        cancel: { label: '取消' },
+                        confirm: { label: '确认下载' },
+                    },
+                    callback: function (yes) {
+                        if (!yes) {
+                            self.removeRemoteFile(nodeIP, remoteFile)
+                            self.setDownloadMsg('info', '已取消下载，导出的临时文件已清理')
+                            return
+                        }
+                        self.openDownloadLink(nodeIP, remoteFile, fileName)
+                    },
+                })
+            },
+
+            removeRemoteFile(nodeIP, remoteFile) {
+                axios.post('/api/ssh/exec', { host: nodeIP, command: 'rm -f ' + this.shellQuote(remoteFile) })
+                    .catch(function () { })
+            },
+
+            // 用浏览器打开下载链接（attachment 响应由浏览器接管下载；target=_blank 避免出错时页面被 JSON 替换）
+            openDownloadLink(nodeIP, remoteFile, fileName) {
+                const url = '/api/ssh/download?' + new URLSearchParams({
+                    host: nodeIP, remote_file: remoteFile, filename: fileName, delete: '1',
+                }).toString()
+                const a = document.createElement('a')
+                a.href = url
+                a.target = '_blank'
+                a.rel = 'noopener'
+                document.body.appendChild(a)
+                a.click()
+                document.body.removeChild(a)
+                this.setDownloadMsg('success', '[' + nodeIP + '] 已在浏览器中打开下载链接：' + fileName)
+            },
+
+            // ========== 上传相关 ==========
+
+            formatFileSize(bytes) {
+                if (!bytes || bytes <= 0) return '0 B'
+                const units = ['B', 'KB', 'MB', 'GB']
+                let idx = 0
+                let size = bytes
+                while (size >= 1024 && idx < units.length - 1) {
+                    size /= 1024
+                    idx++
+                }
+                return size.toFixed(idx > 0 ? 1 : 0) + ' ' + units[idx]
+            },
+
+            // 清空 <input type="file"> 的 value，保证界面与 uploadFiles 状态一致，
+            // 并且再次上传时必须重新选择文件，拿到最新的 File 快照
+            // （本地 tar 被重新导出覆盖后，旧 File 快照上传会被浏览器以 Network Error 中断）
+            resetFileInput() {
+                const input = this.$refs.uploadFileInput
+                if (input) input.value = ''
+            },
+
+            openUploadModal() {
+                this.uploadFiles = []
+                this.uploadTasks = []
+                this.uploading = false
+                this.uploadFinished = false
+                this.resetFileInput()
+                $('#uploadImageModal').modal('show')
+            },
+
+            onUploadFileChange(e) {
+                const files = e && e.target && e.target.files ? e.target.files : []
+                this.uploadFiles = []
+                for (let i = 0; i < files.length; i++) {
+                    this.uploadFiles.push(files[i])
+                }
+                // 重新生成任务列表
+                this.buildUploadTasks()
+            },
+
+            buildUploadTasks() {
+                const tasks = []
+                const nodeIPs = []
+                for (let i = 0; i < this.nodeList.length; i++) {
+                    const ip = this.nodeList[i].internal_ip
+                    if (ip) nodeIPs.push(ip)
+                }
+                for (let f = 0; f < this.uploadFiles.length; f++) {
+                    const file = this.uploadFiles[f]
+                    for (let n = 0; n < nodeIPs.length; n++) {
+                        tasks.push({
+                            nodeIP: nodeIPs[n],
+                            fileName: file.name,
+                            fileIndex: f,
+                            status: 'pending',   // pending | uploading | importing | done | failed
+                            progress: 0,
+                            error: '',
+                        })
+                    }
+                }
+                this.uploadTasks = tasks
+                this.uploadFinished = false
+            },
+
+            async startUpload() {
+                if (this.uploading) return
+                if (this.uploadFiles.length < 1) return
+
+                this.uploading = true
+                this.uploadFinished = false
+
+                // 重置所有任务状态
+                for (let i = 0; i < this.uploadTasks.length; i++) {
+                    this.uploadTasks[i].status = 'pending'
+                    this.uploadTasks[i].progress = 0
+                    this.uploadTasks[i].error = ''
+                }
+
+                // 依次上传
+                for (let i = 0; i < this.uploadTasks.length; i++) {
+                    const task = this.uploadTasks[i]
+                    const file = this.uploadFiles[task.fileIndex]
+                    if (!file) {
+                        task.status = 'failed'
+                        task.error = '文件不存在'
+                        continue
+                    }
+
+                    task.status = 'uploading'
+                    task.progress = 0
+                    const taskStartTime = Date.now()
+
+                    // 远端临时 tar 路径：时间戳 + 随机串，避免并发上传重名
+                    const remoteFile = '/tmp/k3s-image-' + Date.now() + '-'
+                        + Math.random().toString(16).slice(2, 8) + '.tar'
+
+                    try {
+                        // 阶段一：/api/ssh/upload 上传文件到节点（multipart）
+                        // 每个节点都新建 FormData，不复用已被消费的对象；使用原始 File 对象
+                        const formData = new FormData()
+                        formData.append('host', task.nodeIP)
+                        formData.append('remote_file', remoteFile)
+                        formData.append('file', file, file.name)
+
+                        const taskRef = task
+                        // 不手动设置 Content-Type: multipart/form-data，
+                        // 让浏览器自动带上 boundary，避免非标准环境下 boundary 丢失
+                        const uploadResp = await axios.post('/api/ssh/upload', formData, {
+                            onUploadProgress: function (progressEvent) {
+                                if (progressEvent.total && progressEvent.total > 0) {
+                                    taskRef.progress = Math.round((progressEvent.loaded / progressEvent.total) * 100)
+                                }
+                            },
+                        })
+
+                        if (!uploadResp.data || uploadResp.data.code !== 0) {
+                            task.status = 'failed'
+                            task.error = '[节点 ' + task.nodeIP + '] 上传失败：'
+                                + ((uploadResp.data && uploadResp.data.message) || '未知错误')
+                            continue
+                        }
+
+                        task.progress = 100
+
+                        // 阶段二：/api/ssh/exec 在节点上执行 k3s 镜像导入
+                        task.status = 'importing'
+                        const importCmd = 'k3s ctr image import ' + this.shellQuote(remoteFile)
+                        const execResp = await axios.post('/api/ssh/exec', {
+                            host: task.nodeIP,
+                            command: importCmd,
+                        })
+
+                        // 无论导入成功与否，都清理远端临时文件
+                        this.removeRemoteFile(task.nodeIP, remoteFile)
+
+                        if (!execResp.data || execResp.data.code !== 0) {
+                            task.status = 'failed'
+                            task.error = '[节点 ' + task.nodeIP + '] 导入失败：'
+                                + ((execResp.data && execResp.data.message) || '未知错误')
+                        } else {
+                            task.status = 'done'
+                        }
+                    } catch (e) {
+                        // 异常时也尽力清理远端临时文件
+                        this.removeRemoteFile(task.nodeIP, remoteFile)
+                        // 错误信息带上节点 IP、文件、err.code 和耗时，
+                        // 便于在没有 err.response 时区分超时 / 连接被重置 / 文件被修改
+                        const elapsed = Math.round((Date.now() - taskStartTime) / 1000)
+                        let msg = '[节点 ' + task.nodeIP + '] ' + file.name + ' (' + this.formatFileSize(file.size) + ') 失败：'
+                            + (e && e.message ? e.message : String(e))
+                        if (e && e.code) msg += ' (' + e.code + ')'
+                        msg += '，已用 ' + elapsed + 's'
+                        if (e && e.message === 'Network Error' && !e.response) {
+                            msg += '。未收到服务端响应：请检查网关超时/请求体大小限制，或本地文件在选择后已被修改，请重新选择文件后重试'
+                        }
+                        console.error('upload failed', task.nodeIP, e)
+                        task.status = 'failed'
+                        task.error = msg
+                    }
+                }
+
+                this.uploading = false
+                this.uploadFinished = true
+
+                // 全部成功后清空已选文件和 input，下次上传必须重新选择文件；
+                // 保留 uploadTasks，让结果表格和统计仍然可见。有失败任务时保留文件以便重试。
+                if (this.uploadTasks.length > 0 && this.uploadSuccessCount === this.uploadTasks.length) {
+                    this.uploadFiles = []
+                    this.resetFileInput()
+                }
+            },
+        },
+    }
+</script>

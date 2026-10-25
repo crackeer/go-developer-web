@@ -1,0 +1,423 @@
+<template id="template">
+    <div style="display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 10px;">
+        <span>FTP: {{displayDir}}</span>
+        <span>共{{fileList.length}}个文件<template v-if="keyword">，匹配{{displayFileList.length}}个</template></span>
+        <input type="file" multiple @change="uploadFile" ref="fileInput" />
+        <button class="btn btn-sm btn-default" style="margin-left: auto;" @click="openConfig">修改FTP配置</button>
+        <button class="btn btn-sm btn-default" @click="mkdir">新建文件夹</button>
+        <button class="btn btn-sm btn-default" @click="getFileList()" :disabled="loading">
+            {{ loading ? '刷新中...' : '刷新' }}
+        </button>
+        <input type="text" class="form-control input-sm" v-model="keyword" placeholder="搜索文件/文件夹"
+            style="width: 200px;" />
+    </div>
+    <div class="table-responsive">
+        <table class="table table-bordered table-condensed">
+            <thead>
+                <tr>
+                    <th>名字</th>
+                    <th>大小</th>
+                    <th>修改时间</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>..</td>
+                    <td>.</td>
+                    <td>.</td>
+                    <td>
+                        <button class="btn btn-sm btn-link" @click="goUpper">上一级</button>
+                    </td>
+                </tr>
+                <tr v-if="loading">
+                    <td colspan="4" style="text-align: center;">加载中...</td>
+                </tr>
+                <tr v-for="(item, i) in displayFileList" :key="item.path" v-if="!loading">
+                    <td v-if="item.is_dir">
+                        <a :href="'/ftp/index?dir=' + encodeURIComponent(item.path)">{{item.name}}</a>
+                    </td>
+                    <td v-else>
+                        {{item.name}}
+                    </td>
+                    <td>{{item.is_dir ? '-' : item.size}}</td>
+                    <td>{{item.modify}}</td>
+                    <td>
+                        <button class="btn btn-sm btn-link" @click="download(item)" v-if="!item.is_dir">下载</button>
+                        <button class="btn btn-sm btn-link" @click="rename(item)">重命名</button>
+                        <button class="btn btn-sm btn-link" @click="handleDelete(item)" v-if="!item.is_dir">删除</button>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+    <div class="modal fade" id="uploadModal" tabindex="-1" role="dialog"
+        aria-labelledby="uploadModalLabel" data-backdrop='static'>
+        <div class="modal-dialog" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span
+                            aria-hidden="true">&times;</span></button>
+                    <h4 class="modal-title" id="uploadModalLabel">上传进度</h4>
+                </div>
+                <div class="modal-body">
+                    <p>共 {{ uploadList.length }} 个文件，已完成 {{ uploadedFiles }} 个</p>
+                    <div v-for="(item, index) in uploadList" :key="index" style="margin-bottom: 12px;">
+                        <p style="margin-bottom: 4px; word-break: break-all;">
+                            {{ item.name }}
+                            <span v-if="item.status === 'error'" class="text-danger">上传失败</span>
+                            <span v-else-if="item.progress === 100" class="text-success">完成</span>
+                            <span v-else>{{ item.progress }}%</span>
+                        </p>
+                        <div class="progress progress-striped" :class="{ active: item.progress < 100 && item.status !== 'error' }"
+                            style="margin-bottom: 0;">
+                            <div class="progress-bar" :class="item.status === 'error' ? 'progress-bar-danger' : 'progress-bar-success'"
+                                role="progressbar" aria-valuemin="0" aria-valuemax="100"
+                                :style="{ width: item.progress + '%' }">
+                                <span class="sr-only">{{ item.progress }}% 完成</span>
+                            </div>
+                        </div>
+                        <p v-if="item.status === 'error'" class="text-danger"
+                            style="margin: 4px 0 0; word-break: break-all;">
+                            {{ item.errorMsg || '上传失败' }}
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="modal fade" id="configModal" tabindex="-1" role="dialog"
+        aria-labelledby="configModalLabel" data-backdrop='static'>
+        <div class="modal-dialog" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span
+                            aria-hidden="true">&times;</span></button>
+                    <h4 class="modal-title" id="configModalLabel">修改 FTP 配置</h4>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>Host</label>
+                        <input type="text" class="form-control" v-model="configForm.host"
+                            placeholder="例如 10.0.0.1:21" />
+                    </div>
+                    <div class="form-group">
+                        <label>用户名</label>
+                        <input type="text" class="form-control" v-model="configForm.username" />
+                    </div>
+                    <div class="form-group">
+                        <label>密码</label>
+                        <input type="password" class="form-control" v-model="configForm.password"
+                            :placeholder="configForm.has_password ? '留空则不修改原密码' : '请输入密码'" autocomplete="new-password" />
+                    </div>
+                    <div class="form-group">
+                        <label>Prefix（根目录）</label>
+                        <input type="text" class="form-control" v-model="configForm.prefix"
+                            placeholder="例如 /data，可留空" />
+                    </div>
+                    <p v-if="configError" class="text-danger" style="word-break: break-all;">{{ configError }}</p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-default" data-dismiss="modal" :disabled="configSaving">取消</button>
+                    <button type="button" class="btn btn-primary" @click="saveConfig" :disabled="configSaving">
+                        {{ configSaving ? '保存中...' : '保存' }}
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</template>
+<script>
+    // 路径均为相对 FTP prefix 的路径，根目录为 "."
+    function joinPath(dir, name) {
+        if (!dir || dir == '.' || dir == '/') {
+            return name
+        }
+        return dir.replace(/\/+$/, '') + '/' + name
+    }
+
+    window.VueObject = {
+        data() {
+            return {
+                dir: '.',
+                fileList: [],
+                uploadList: [],
+                keyword: '',
+                loading: false,
+                configForm: {
+                    host: '',
+                    username: '',
+                    password: '',
+                    prefix: '',
+                    has_password: false,
+                },
+                configError: '',
+                configSaving: false,
+            }
+        },
+        template: '#template',
+        computed: {
+            displayDir() {
+                return this.dir == '.' ? '/' : this.dir
+            },
+            uploadedFiles() {
+                return this.uploadList.filter(item => item.progress === 100).length
+            },
+            displayFileList() {
+                let keyword = this.keyword.trim().toLowerCase()
+                if (!keyword) {
+                    return this.fileList
+                }
+                return this.fileList.filter(item => (item.name || '').toLowerCase().indexOf(keyword) >= 0)
+            }
+        },
+        async mounted() {
+            this.dir = getQuery('dir', '.') || '.'
+            await this.getFileList()
+        },
+        methods: {
+            async getFileList() {
+                if (this.loading) {
+                    return
+                }
+                this.loading = true
+                this.fileList = []
+                let result
+                try {
+                    result = await axios.get('/api/ftp/list', { params: { path: this.dir } })
+                } catch (e) {
+                    bootbox.alert((e.response && e.response.data && e.response.data.message) || e.message)
+                    return
+                } finally {
+                    this.loading = false
+                }
+                if (result.data.code != 0) {
+                    bootbox.alert(result.data.message)
+                    return
+                }
+
+                // ftp.Entry: Name, Target, Type(0文件 1目录 2链接), Size, Time
+                let list = []
+                let entries = result.data.data || []
+                for (let i = 0; i < entries.length; i++) {
+                    let e = entries[i]
+                    if (e.Name == '.' || e.Name == '..') {
+                        continue
+                    }
+                    let isDir = e.Type == 1
+                    list.push({
+                        name: e.Name,
+                        path: joinPath(this.dir, e.Name),
+                        is_dir: isDir,
+                        size: filesize(parseInt(e.Size), { standard: "jedec" }),
+                        modify: e.Time ? dayjs(e.Time).format('YYYY-MM-DD HH:mm:ss') : '',
+                    })
+                }
+                this.fileList = list.sort(function (a, b) {
+                    if (a.is_dir != b.is_dir) {
+                        return a.is_dir ? -1 : 1
+                    }
+                    return a.name.localeCompare(b.name)
+                })
+            },
+            download(item) {
+                window.open('/api/ftp/download?path=' + encodeURIComponent(item.path), '_blank')
+            },
+            goUpper() {
+                if (this.dir == '.' || this.dir == '/') {
+                    return
+                }
+                let parts = this.dir.split('/').filter(p => p.length > 0)
+                parts.pop()
+                let parentDir = parts.length > 0 ? parts.join('/') : '.'
+                window.location.href = window.location.pathname + "?dir=" + encodeURIComponent(parentDir)
+            },
+            async uploadFile(event) {
+                const files = event.target.files;
+                this.uploadList = Array.from(files).map(file => ({
+                    name: file.name,
+                    progress: 0,
+                    status: '',
+                    errorMsg: '',
+                }))
+                $('#uploadModal').modal('show');
+
+                for (let i = 0; i < files.length; i++) {
+                    try {
+                        await this.doUploadFile(files[i], i)
+                    } catch (e) {
+                        this.uploadList[i].status = 'error'
+                        this.uploadList[i].errorMsg = (e.response && e.response.data && e.response.data.message) || e.message || '上传失败'
+                    }
+                }
+                if (this.$refs.fileInput) {
+                    this.$refs.fileInput.value = ''
+                }
+                this.getFileList()
+            },
+            async doUploadFile(file, index) {
+                const formData = new FormData()
+                formData.append('file', file)
+                formData.append('path', this.dir)
+                let result = await axios.post('/api/ftp/upload', formData, {
+                    headers: {
+                        'Content-Type': 'multipart/form-data'
+                    },
+                    onUploadProgress: (progressEvent) => {
+                        let percent = 0
+                        if (progressEvent.total) {
+                            // 到 99% 为止，服务端写入 FTP 完成后才算 100%
+                            percent = Math.min(99, Math.round((progressEvent.loaded / progressEvent.total) * 100))
+                        }
+                        this.uploadList[index].progress = percent
+                    }
+                })
+                if (!result.data || result.data.code != 0) {
+                    throw new Error(result.data && result.data.message ? result.data.message : '上传失败')
+                }
+                this.uploadList[index].progress = 100
+            },
+            async openConfig() {
+                this.configError = ''
+                this.configForm = {
+                    host: '',
+                    username: '',
+                    password: '',
+                    prefix: '',
+                    has_password: false,
+                }
+                let result
+                try {
+                    result = await axios.get('/api/ftp/config')
+                } catch (e) {
+                    // 配置不存在时仍可打开表单新建
+                    this.configError = (e.response && e.response.data && e.response.data.message) || e.message
+                    $('#configModal').modal('show')
+                    return
+                }
+                if (result.data.code != 0) {
+                    this.configError = result.data.message
+                    $('#configModal').modal('show')
+                    return
+                }
+                let d = result.data.data || {}
+                this.configForm.host = d.host || ''
+                this.configForm.username = d.username || ''
+                this.configForm.prefix = d.prefix || ''
+                this.configForm.has_password = !!d.has_password
+                $('#configModal').modal('show')
+            },
+            async saveConfig() {
+                this.configError = ''
+                let host = (this.configForm.host || '').trim()
+                let username = (this.configForm.username || '').trim()
+                if (!host || !username) {
+                    this.configError = 'Host 和用户名不能为空'
+                    return
+                }
+                if (!this.configForm.password && !this.configForm.has_password) {
+                    this.configError = '请输入密码'
+                    return
+                }
+                this.configSaving = true
+                let result
+                try {
+                    result = await axios.post('/api/ftp/config', {
+                        host: host,
+                        username: username,
+                        password: this.configForm.password,
+                        prefix: (this.configForm.prefix || '').trim(),
+                    })
+                } catch (e) {
+                    this.configError = (e.response && e.response.data && e.response.data.message) || e.message
+                    return
+                } finally {
+                    this.configSaving = false
+                }
+                if (result.data.code != 0) {
+                    this.configError = result.data.message
+                    return
+                }
+                $('#configModal').modal('hide')
+                bootbox.alert("FTP 配置已保存", () => {
+                    this.getFileList()
+                })
+            },
+            mkdir() {
+                bootbox.prompt({
+                    title: "请输入文件夹名字",
+                    callback: async (name) => {
+                        if (name == null || name == undefined) return
+                        name = name.trim()
+                        if (name.length < 1) {
+                            return
+                        }
+                        if (name.indexOf('/') >= 0) {
+                            bootbox.alert('名字不能包含 /')
+                            return
+                        }
+                        let result
+                        try {
+                            result = await axios.post('/api/ftp/mkdir', {
+                                path: joinPath(this.dir, name),
+                            })
+                        } catch (e) {
+                            bootbox.alert((e.response && e.response.data && e.response.data.message) || e.message)
+                            return
+                        }
+                        if (result.data.code != 0) {
+                            bootbox.alert(result.data.message)
+                            return
+                        }
+                        bootbox.alert("新建文件夹成功", () => {
+                            this.getFileList()
+                        })
+                    }
+                });
+            },
+            handleDelete(item) {
+                bootbox.confirm('确认删除该文件？无法恢复', async (yes) => {
+                    if (!yes) {
+                        return
+                    }
+                    let result = await axios.post('/api/ftp/delete', { path: item.path })
+                    if (result.data.code != 0) {
+                        bootbox.alert(result.data.message)
+                        return
+                    }
+                    bootbox.alert("删除成功", () => {
+                        this.getFileList()
+                    })
+                })
+            },
+            rename(item) {
+                bootbox.prompt({
+                    title: "请输入新名字",
+                    value: item.name,
+                    callback: async (name) => {
+                        if (name == null || name == undefined) return
+                        name = name.trim()
+                        if (name.length < 1 || name == item.name) {
+                            return
+                        }
+                        if (name.indexOf('/') >= 0) {
+                            bootbox.alert('名字不能包含 /')
+                            return
+                        }
+                        let result = await axios.post('/api/ftp/rename', {
+                            from: item.path,
+                            to: joinPath(this.dir, name),
+                        })
+                        if (result.data.code != 0) {
+                            bootbox.alert(result.data.message)
+                            return
+                        }
+                        bootbox.alert("重命名成功", () => {
+                            this.getFileList()
+                        })
+                    }
+                });
+            },
+        }
+    }
+</script>

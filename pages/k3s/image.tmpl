@@ -1,0 +1,411 @@
+<template id="template">
+    <div class="well">
+        <p>
+            <span class="text-primary" style="font-size: 19px;">上传镜像：</span> <input type="file" multiple
+                @change="uploadFile" style="display: inline-block;" />
+        </p>
+        <span>存放位置：<a :href="'/file/manage?dir=' + storagePath" target="_blank">{{storagePath}}</a></p>
+
+            <div v-if="uploadProgress !== null && uploadProgress !== 100">
+                上传进度: {{ uploadProgress }}%
+                <div class="progress progress-striped active">
+                    <div class="progress-bar progress-bar-success" role="progressbar" aria-valuenow="60"
+                        aria-valuemin="0" aria-valuemax="100" :style="{ width: uploadProgress + '%' }">
+                        <span class="sr-only">{{ uploadProgress }}% 完成</span>
+                    </div>
+                </div>
+            </div>
+    </div>
+
+    <h4>镜像列表(数量{{filterImageList.length}})</h4>
+    <hr />
+    <div class="row" style="margin-bottom: 10px;">
+        <div class="col-sm-4">
+            <button class="btn btn-default" style="margin-right: 6px;" @click="clearNoneImages">清理无效镜像</button>
+            <button class="btn btn-default" style="margin-right: 6px;" @click="getImagesCommitID">获取镜像commitID</button>
+        </div>
+        <div class="col-sm-8 text-right">
+            <div class="form-group" style="margin-bottom: 0;">
+                <label for="exampleInputName2" style="margin-right: 8px;">检索：</label>
+                <input type="text" class="form-control clearable-input" placeholder="输入关键字搜索..." v-model="searchText"
+                    @input="searchKeyword" style="width: 300px; display: inline-block;">
+                <button v-if="searchText" type="button" class="btn btn-default btn-sm" style="margin-left: 8px;"
+                    @click="resetSearch">重置</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="table-responsive">
+        <table class="table table-bordered table-condensed">
+            <thead>
+                <tr>
+                    <th>名称</th>
+                    <th>大小</th>
+                    <th>IMAGE_ID</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr v-for="(item,i) in filterImageList" :key="i">
+                    <td>{{item.IMAGE}}:{{item.TAG}}</td>
+                    <td>{{item.SIZE}}</td>
+                    <td>{{item.IMAGE_ID}}</td>
+                    <td>
+                        <button class="btn btn-link btn-sm" @click="deleteImage(item)">删除</button>
+                        <button class="btn btn-link btn-sm" @click="saveImage(item)">备份</button>
+                        <button class="btn btn-link btn-sm" @click="inspectImage(item)">详情</button>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="modal fade" id="imageCommitIDModel" tabindex="-1" role="dialog" aria-labelledby="imageCommitIDModelLabel">
+        <div class="modal-dialog modal-lg" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h4 class="modal-title" id="imageCommitIDModelLabel">镜像详情</h4>
+                </div>
+                <div class="modal-body">
+                    <div class="table-responsive" style="max-height: 500px; overflow: scroll;">
+                        <table class="table table-bordered table-condensed">
+                            <thead>
+                                <tr>
+                                    <th>镜像</th>
+                                    <th>BranchCommit</th>
+                                    <th>创建时间</th>
+                                    <th>ExposedPorts</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="(row, idx) in imageCommitList" :key="idx">
+                                    <td style="word-break: break-all;">{{ row.image }}</td>
+                                    <td>{{ row.branchCommit }}</td>
+                                    <td>{{ row.createdDisplay }}</td>
+                                    <td style="word-break: break-all;">{{ row.exposedPorts }}</td>
+                                </tr>
+                                <tr v-if="!imageCommitList || imageCommitList.length === 0">
+                                    <td colspan="4" class="text-muted">暂无数据</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</template>
+<script>
+    const businessImages = [
+        // 在此填写常用镜像，例如 'docker.io/library/your-app:local'
+    ]
+    window.VueObject = {
+        data() {
+            return {
+                dir: '/',
+                imageList: [],
+                filterImageList: [],
+                storagePath: '',
+                fileList: [],
+                filterFileList: [],
+                uploadProgress: null,
+                searchText: '',
+                imageInspect: {
+
+                },
+                imageCommitList: [],
+            }
+        },
+        template: '#template',
+        async mounted() {
+            this.searchText = getQuery('keyword', '')
+            this.storagePath = "/data1/k3s_images/" + dayjs().format('YYYY-MM-DD') + "/"
+            await axios.get('/api/file/mkdirall?dir=' + this.storagePath)
+            this.refresh()
+        },
+        methods: {
+            async refresh() {
+                await this.getImages()
+                await this.searchKeyword()
+            },
+            async getImages() {
+                let result = await axios.post('/api/execute/crictl', {
+                    "params": [
+                        "images"
+                    ]
+                })
+                if (result.data.code != 0) {
+                    return []
+                }
+
+                let list = formatCommandOutput(result.data.data.output, 1, ['IMAGE', 'TAG', 'IMAGE_ID', 'SIZE'])
+                list.sort((a, b) => {
+                    if (a.IMAGE == "<none>") {
+                        return 1
+                    }
+                    if (b.IMAGE == "<none>") {
+                        return -1
+                    }
+                    return a.IMAGE.localeCompare(b.IMAGE)
+                })
+                //list = list.(item => item.REF.indexOf("<none>") != 0)
+                this.imageList = list
+            },
+            async saveImage(item) {
+                let timestamp = dayjs().format('HH-mm')
+                let parts = item.IMAGE.split("/")
+                let imageName = "backup-" + parts[parts.length - 1].replace(":", "-") + "-" + timestamp + ".tar"
+                let saveFile = this.storagePath + imageName
+                bootboxLoading("备份中，请勿操作")
+                let result = await axios.post('/api/execute/k3s', {
+                    "params": [
+                        "ctr", "images", "export", saveFile, item.IMAGE + ":" + item.TAG
+                    ]
+                })
+                bootbox.hideAll()
+                if (result.data.code != 0) {
+                    bootbox.alert("备份失败！！！" + result.data.message)
+                    return
+                }
+                bootbox.alert("备份成功，文件存放在:" + saveFile)
+            },
+            async uploadFile(event) {
+                const files = event.target.files;
+                let index = 0
+                for (const file of files) {
+                    try {
+                        let result = await this.doUploadFile(file, index)
+                        if (!result) {
+                            return
+                        }
+                    } catch (e) {
+                        console.log(e)
+                        return
+                    }
+                    index++
+                }
+                bootbox.hideAll()
+                bootbox.alert("上传成功！！！")
+            },
+            async doUploadFile(file, index) {
+                const formData = new FormData()
+                formData.append('file', file)
+                console.log(formData)
+                bootboxLoading("正在上传第" + (index + 1) + "个文件，请勿操作...")
+                let result = await axios.post('/api/file/upload?dir=' + this.storagePath, formData, {
+                    headers: {
+                        'Content-Type': 'multipart/form-data'
+                    },
+                    onUploadProgress: (progressEvent) => {
+                        console.log(progressEvent.loaded, progressEvent.total)
+                    }
+                })
+                bootbox.hideAll()
+                console.log(result)
+                if (result.data.code < 0) {
+                    bootbox.alert("上传失败！！！" + result.data.message)
+                    return false
+                }
+                bootboxLoading("上传成功，导入中，请勿操作...")
+                let result1 = await axios.post('/api/execute/k3s', {
+                    "params": [
+                        "ctr", "image", "import", result.data.data.dest
+                    ]
+                })
+                if (result1.data.code != 0) {
+                    bootbox.alert("导入失败！！！")
+                    return false
+                }
+                return true
+            },
+            async deleteImage(item) {
+                if (!item || !item.IMAGE_ID) {
+                    bootbox.alert("缺少 IMAGE_ID，无法删除")
+                    return
+                }
+                const imageId = String(item.IMAGE_ID).trim()
+                const refName = item.IMAGE && item.TAG ? (item.IMAGE + ":" + item.TAG) : imageId
+                bootbox.confirm("确定删除镜像: " + refName + "？", async (result) => {
+                    if (!result) {
+                        return
+                    }
+                    bootboxLoading("删除中，请勿操作...")
+                    let delResult = await axios.post('/api/execute/crictl', {
+                        "params": [
+                            "rmi", imageId
+                        ]
+                    })
+                    bootbox.hideAll()
+                    if (delResult.data.code != 0) {
+                        bootbox.alert("删除失败！！！" + delResult.data.message)
+                        return
+                    }
+                    bootbox.alert("删除成功")
+                    await this.refresh()
+                })
+            },
+            async clearNoneImages() {
+                // crictl images 中，当 REPOSITORY 显示为 <none> 时，通常是无效镜像引用
+                const noneImageIds = []
+                const seen = new Set()
+                for (let i = 0; i < this.imageList.length; i++) {
+                    const it = this.imageList[i]
+                    const repo = it && it.IMAGE != null ? String(it.IMAGE).trim() : ''
+                    if (repo !== '<none>') {
+                        continue
+                    }
+                    const id = it && it.IMAGE_ID != null ? String(it.IMAGE_ID).trim() : ''
+                    if (!id || seen.has(id)) {
+                        continue
+                    }
+                    seen.add(id)
+                    noneImageIds.push(id)
+                }
+
+                if (noneImageIds.length === 0) {
+                    bootbox.alert("暂无需要清理的无效镜像")
+                    return
+                }
+
+                bootbox.confirm("确定清理所有 IMAGE=<none> 的镜像？", async (result) => {
+                    if (!result) {
+                        return
+                    }
+                    bootboxLoading("清理中，请勿操作...")
+                    const failed = []
+                    for (let k = 0; k < noneImageIds.length; k++) {
+                        const imageId = noneImageIds[k]
+                        let delResult
+                        try {
+                            delResult = await axios.post('/api/execute/crictl', {
+                                "params": ["rmi", imageId]
+                            })
+                        } catch (e) {
+                            failed.push(imageId + ":" + (e && e.message ? e.message : String(e)))
+                            continue
+                        }
+                        if (delResult.data.code != 0) {
+                            failed.push(imageId + ":" + (delResult.data.message ? delResult.data.message : '删除失败'))
+                        }
+                    }
+                    bootbox.hideAll()
+
+                    if (failed.length > 0) {
+                        bootbox.alert("清理完成，但有部分镜像删除失败：<br>" + failed.join("<br>"))
+                        await this.refresh()
+                        return
+                    }
+
+                    bootbox.alert("清理完成")
+                    await this.refresh()
+                })
+            },
+            formatImageCreatedDisplay(iso) {
+                if (iso == null || iso === '') {
+                    return '-'
+                }
+                try {
+                    if (typeof dayjs !== 'undefined') {
+                        const d = dayjs(iso)
+                        if (d.isValid()) {
+                            return d.format('YYYY-MM-DD HH:mm:ss')
+                        }
+                    }
+                    const s = String(iso)
+                    const m = s.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})/)
+                    if (m) {
+                        return m[1] + ' ' + m[2]
+                    }
+                    return s
+                } catch (e) {
+                    return String(iso)
+                }
+            },
+            formatExposedPortsDisplay(exposed) {
+                if (!exposed || typeof exposed !== 'object') {
+                    return '-'
+                }
+                const keys = Object.keys(exposed)
+                if (keys.length === 0) {
+                    return '-'
+                }
+                return keys.sort().join(', ')
+            },
+            async getImagesCommitID() {
+                this.imageCommitList = []
+                bootboxLoading("正在数据获取中...")
+                const rows = []
+
+                for (let i = 0; i < businessImages.length; i++) {
+                    const imageRef = businessImages[i]
+                    try {
+                        let result = await axios.post('/api/execute/crictl', {
+                            "params": ["inspecti", imageRef]
+                        })
+                        if (result.data.code != 0) {
+                            rows.push({
+                                image: imageRef,
+                                branchCommit: '-',
+                                createdDisplay: '-',
+                                exposedPorts: '-',
+                            })
+                            continue
+                        }
+                        let output = JSON.parse(result.data.data.output)
+                        const imageSpec = (((output || {}).info || {}).imageSpec) || {}
+                        const cfg = imageSpec.config || {}
+                        let labels = cfg.Labels
+                        let branchCommit = (labels && labels.BranchCommit) ? labels.BranchCommit : '-'
+                        const createdRaw = imageSpec.created
+                        const createdDisplay = this.formatImageCreatedDisplay(createdRaw)
+                        const exposedPorts = this.formatExposedPortsDisplay(cfg.ExposedPorts)
+                        rows.push({
+                            image: imageRef,
+                            branchCommit: String(branchCommit),
+                            createdDisplay: createdDisplay,
+                            exposedPorts: exposedPorts,
+                        })
+                    } catch (e) {
+                        rows.push({
+                            image: imageRef,
+                            branchCommit: '-',
+                            createdDisplay: '-',
+                            exposedPorts: '-',
+                        })
+                    }
+                }
+
+                bootbox.hideAll()
+                this.imageCommitList = rows
+                $('#imageCommitIDModel').modal('show')
+            },
+            async searchKeyword() {
+                this.filterImageList = this.imageList.filter((item) => {
+                    return item.IMAGE.includes(this.searchText)
+                })
+                pushStateWith({
+                    keyword: this.searchText
+                })
+            },
+            resetSearch() {
+                this.searchText = ''
+                this.searchKeyword()
+            },
+
+            async inspectImage(item) {
+                let result = await axios.post('/api/execute/crictl', {
+                    "params": ["inspecti", item.IMAGE_ID]
+                })
+                if (result.data.code != 0) {
+                    bootbox.alert("获取标签失败:" + result.data.message)
+                    return
+                }
+                let output = JSON.parse(result.data.data.output)
+                if (output.info.imageSpec.history.length > 0) {
+                    output.info.imageSpec.history = output.info.imageSpec.history.reverse()
+                }
+                showJSONString(JSON.stringify(output))
+            }
+        }
+    }
+</script>

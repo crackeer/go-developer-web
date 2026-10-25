@@ -1,0 +1,13 @@
+{
+    "title": "服务状态",
+    "page_data": {
+        "business_api_list": [
+            {
+                "name": "Example Service",
+                "url": "http://example-service.default.svc.cluster.local/healthcheck",
+                "method": "GET",
+                "timeout": 10
+            }
+        ]
+    }
+}

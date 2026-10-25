@@ -1,0 +1,20 @@
+# 构建产物
+/devops-console
+*.exe
+
+# SQLite 本地数据（资源配置管理）
+/data/
+
+# 本地配置（含密钥，切勿提交）
+.env
+
+# Go 本地缓存
+.gocache/
+.gomod/
+
+# 日志
+frontend/logs/
+*.log
+
+# 系统文件
+.DS_Store

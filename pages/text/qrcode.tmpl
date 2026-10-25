@@ -1,0 +1,40 @@
+<script type="text/javascript">
+
+</script>
+
+<template id="template">
+    <div class="row">
+        <div class="col-md-10">
+            <textarea class="form-control" placeholder="搜索文本" v-model="value" @input="convert"></textarea>
+        </div>
+    </div>
+    <div id="qrcode" style="margin: 20px auto; text-align: center;"></div>
+
+</template>
+<script>
+    var qrcode = null;
+    window.VueObject = {
+        data() {
+            return {
+                value: 'http://baidu.com',
+            }
+        },
+        template: '#template',
+        async mounted() {
+            qrcode = new QRCode("qrcode", {
+                text: this.value,
+                width: 328,
+                height: 328,
+                colorDark: "#000000",
+                colorLight: "#ffffff",
+                correctLevel: QRCode.CorrectLevel.H
+            });
+        },
+        methods: {
+            async convert() {
+                qrcode.clear(); // clear the code.
+                qrcode.makeCode(this.value); // make another code.
+            }
+        }
+    }
+</script>

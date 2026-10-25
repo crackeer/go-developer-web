@@ -1,0 +1,412 @@
+<template id="template">
+    <div>
+        <div style="display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 10px;">
+            <span>节点：
+                <select class="input-sm" v-model="host" @change="changeHost">
+                    <option v-for="n in nodes" :key="n" :value="n">{{n}}</option>
+                </select>
+            </span>
+            <span>白名单：
+                <a v-for="r in roots" :key="r" href="javascript:;" class="mr-20" @click="goDir(r)">{{r}}</a>
+            </span>
+        </div>
+        <ol class="breadcrumb" style="margin-bottom: 10px;">
+            <li v-for="(c, i) in crumbs" :key="c.path" :class="{ active: i == crumbs.length - 1 }">
+                <span v-if="i == crumbs.length - 1">{{c.name}}</span>
+                <a v-else href="javascript:;" @click="goDir(c.path)">{{c.name}}</a>
+            </li>
+        </ol>
+        <div style="display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 10px;">
+            <span>共{{fileList.length}}项<template v-if="keyword">，匹配{{displayFileList.length}}项</template></span>
+            <input type="file" multiple @change="uploadFile" ref="fileInput" />
+            <button class="btn btn-sm btn-default" @click="mkdir">新建目录</button>
+            <button class="btn btn-sm btn-default" style="margin-left: auto;" @click="getFileList()">刷新</button>
+            <input type="text" class="form-control input-sm" v-model="keyword" placeholder="搜索文件/文件夹"
+                style="width: 200px;" />
+        </div>
+        <div class="table-responsive">
+            <table class="table table-bordered table-condensed">
+                <thead>
+                    <tr>
+                        <th>名字</th>
+                        <th>大小</th>
+                        <th>权限</th>
+                        <th>属主</th>
+                        <th>修改时间</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>..</td>
+                        <td>.</td>
+                        <td>.</td>
+                        <td>.</td>
+                        <td>.</td>
+                        <td>
+                            <button class="btn btn-sm btn-link" :disabled="!canGoUp" @click="goUpper">上一级</button>
+                        </td>
+                    </tr>
+                    <tr v-for="item in displayFileList" :key="item.name">
+                        <td>
+                            <a v-if="item.is_dir && !item.broken" href="javascript:;" @click="goDir(item.path)">{{item.name}}/</a>
+                            <span v-else :class="{ 'text-danger': item.broken }">{{item.name}}</span>
+                            <span v-if="item.is_link" class="text-muted"> -> {{item.link_target}}</span>
+                            <span v-if="item.broken" class="text-danger"> (失效)</span>
+                        </td>
+                        <td>{{item.is_dir ? '-' : item.size_text}}</td>
+                        <td><code>{{item.mode}}</code></td>
+                        <td>{{item.owner}}:{{item.group}}</td>
+                        <td>{{item.modify}}</td>
+                        <td>
+                            <button class="btn btn-sm btn-link" @click="download(item)" v-if="!item.is_dir && !item.broken">下载</button>
+                            <button class="btn btn-sm btn-link" @click="rename(item)">重命名</button>
+                            <button class="btn btn-sm btn-link text-danger" @click="handleDelete(item)">删除</button>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="modal fade" id="uploadModal" tabindex="-1" role="dialog"
+            aria-labelledby="uploadModalLabel" data-backdrop='static'>
+            <div class="modal-dialog" role="document">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span
+                                aria-hidden="true">&times;</span></button>
+                        <h4 class="modal-title" id="uploadModalLabel">上传进度</h4>
+                    </div>
+                    <div class="modal-body">
+                        <p>共 {{ uploadList.length }} 个文件，已完成 {{ uploadedFiles }} 个</p>
+                        <div v-for="(item, index) in uploadList" :key="index" style="margin-bottom: 12px;">
+                            <p style="margin-bottom: 4px; word-break: break-all;">
+                                {{ item.name }}
+                                <span v-if="item.status === 'error'" class="text-danger">上传失败</span>
+                                <span v-else-if="item.status === 'skipped'" class="text-muted">已跳过</span>
+                                <span v-else-if="item.progress === 100" class="text-success">完成</span>
+                                <span v-else>{{ item.progress }}%</span>
+                            </p>
+                            <div class="progress progress-striped" :class="{ active: item.progress < 100 && item.status === '' }"
+                                style="margin-bottom: 0;">
+                                <div class="progress-bar" :class="item.status === 'error' ? 'progress-bar-danger' : 'progress-bar-success'"
+                                    role="progressbar" aria-valuemin="0" aria-valuemax="100"
+                                    :style="{ width: item.progress + '%' }">
+                                    <span class="sr-only">{{ item.progress }}% 完成</span>
+                                </div>
+                            </div>
+                            <p v-if="item.status === 'error'" class="text-danger"
+                                style="margin: 4px 0 0; word-break: break-all;">
+                                {{ item.errorMsg || '上传失败' }}
+                            </p>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-default" data-dismiss="modal" :disabled="uploading">关闭</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</template>
+<script>
+    const CODE_FILE_EXISTS = -10
+
+    function joinPath(dir, name) {
+        return dir.replace(/\/+$/, '') + '/' + name
+    }
+
+    function errMsg(e) {
+        return (e.response && e.response.data && e.response.data.message) || e.message || '未知错误'
+    }
+
+    window.VueObject = {
+        data() {
+            return {
+                nodes: [],
+                roots: [],
+                host: '',
+                dir: '',
+                fileList: [],
+                uploadList: [],
+                uploading: false,
+                keyword: '',
+            }
+        },
+        template: '#template',
+        computed: {
+            uploadedFiles() {
+                return this.uploadList.filter(item => item.progress === 100).length
+            },
+            crumbs() {
+                // 不加根 "/" 节点：面包屑分隔符已是 "/"，再加根节点会在最前面多出一个斜杠
+                let list = []
+                let cur = ''
+                this.dir.split('/').filter(p => p.length > 0).forEach(p => {
+                    cur += '/' + p
+                    list.push({ name: p, path: cur })
+                })
+                return list
+            },
+            canGoUp() {
+                // 上一级必须仍在白名单内
+                return this.parentDir() != null
+            },
+            displayFileList() {
+                let keyword = this.keyword.trim().toLowerCase()
+                if (!keyword) {
+                    return this.fileList
+                }
+                return this.fileList.filter(item => (item.name || '').toLowerCase().indexOf(keyword) >= 0)
+            }
+        },
+        async mounted() {
+            let result
+            try {
+                result = await axios.get('/api/ssh/file/nodes')
+            } catch (e) {
+                bootbox.alert(errMsg(e))
+                return
+            }
+            if (result.data.code != 0) {
+                bootbox.alert(result.data.message)
+                return
+            }
+            this.nodes = result.data.data.nodes || []
+            this.roots = result.data.data.roots || []
+            if (this.nodes.length == 0) {
+                bootbox.alert('ssh_config 中没有配置任何节点')
+                return
+            }
+            let host = getQuery('host', '')
+            this.host = this.nodes.indexOf(host) >= 0 ? host : this.nodes[0]
+            this.dir = getQuery('dir', '') || this.roots[0] || '/'
+            await this.getFileList()
+        },
+        methods: {
+            inRoots(p) {
+                return this.roots.some(r => p == r || p.indexOf(r + '/') == 0)
+            },
+            parentDir() {
+                let parts = this.dir.split('/').filter(p => p.length > 0)
+                parts.pop()
+                let parent = '/' + parts.join('/')
+                return this.inRoots(parent) ? parent : null
+            },
+            navigate(host, dir) {
+                window.location.href = window.location.pathname + '?host=' + encodeURIComponent(host) + '&dir=' + encodeURIComponent(dir)
+            },
+            goDir(dir) {
+                this.navigate(this.host, dir)
+            },
+            goUpper() {
+                let parent = this.parentDir()
+                if (parent != null) {
+                    this.goDir(parent)
+                }
+            },
+            changeHost() {
+                // 切换节点时保留当前路径，仅当当前路径不在白名单内时才回退到第一个白名单目录
+                let dir = this.inRoots(this.dir) ? this.dir : (this.roots[0] || '/')
+                this.navigate(this.host, dir)
+            },
+            async getFileList() {
+                let result
+                try {
+                    result = await axios.get('/api/ssh/file/list', { params: { host: this.host, path: this.dir } })
+                } catch (e) {
+                    bootbox.alert(errMsg(e))
+                    return
+                }
+                if (result.data.code != 0) {
+                    bootbox.alert(result.data.message)
+                    return
+                }
+                let list = (result.data.data || []).map(e => ({
+                    name: e.name,
+                    path: joinPath(this.dir, e.name),
+                    is_dir: e.is_dir,
+                    is_link: e.is_link,
+                    link_target: e.link_target,
+                    broken: e.broken,
+                    size_text: filesize(parseInt(e.size), { standard: "jedec" }),
+                    mode: e.mode,
+                    owner: e.owner,
+                    group: e.group,
+                    modify: e.mtime ? dayjs.unix(e.mtime).format('YYYY-MM-DD HH:mm:ss') : '',
+                }))
+                this.fileList = list.sort(function (a, b) {
+                    if (a.is_dir != b.is_dir) {
+                        return a.is_dir ? -1 : 1
+                    }
+                    return a.name.localeCompare(b.name)
+                })
+            },
+            download(item) {
+                window.open('/api/ssh/file/download?host=' + encodeURIComponent(this.host) + '&path=' + encodeURIComponent(item.path), '_blank')
+            },
+            validName(name) {
+                if (name == '.' || name == '..' || name.indexOf('/') >= 0) {
+                    bootbox.alert('名字不能是 . / .. 且不能包含 /')
+                    return false
+                }
+                return true
+            },
+            mkdir() {
+                bootbox.prompt({
+                    title: "新建目录（位于 " + this.dir + "）",
+                    callback: async (name) => {
+                        if (name == null || name == undefined) return
+                        name = name.trim()
+                        if (name.length < 1 || !this.validName(name)) {
+                            return
+                        }
+                        let result = await axios.post('/api/ssh/file/mkdir', {
+                            host: this.host,
+                            path: joinPath(this.dir, name),
+                        })
+                        if (result.data.code != 0) {
+                            bootbox.alert(result.data.message)
+                            return
+                        }
+                        this.getFileList()
+                    }
+                })
+            },
+            rename(item) {
+                bootbox.prompt({
+                    title: "请输入新名字",
+                    value: item.name,
+                    callback: async (name) => {
+                        if (name == null || name == undefined) return
+                        name = name.trim()
+                        if (name.length < 1 || name == item.name || !this.validName(name)) {
+                            return
+                        }
+                        let result = await axios.post('/api/ssh/file/rename', {
+                            host: this.host,
+                            from: item.path,
+                            to: joinPath(this.dir, name),
+                        })
+                        if (result.data.code != 0) {
+                            bootbox.alert(result.data.message)
+                            return
+                        }
+                        this.getFileList()
+                    }
+                })
+            },
+            handleDelete(item) {
+                if (item.is_dir && !item.is_link) {
+                    // 目录递归删除风险高，要求手输目录名确认
+                    bootbox.prompt({
+                        title: "将递归删除目录 " + item.path + " 及其全部内容，无法恢复。请输入目录名 [" + item.name + "] 确认",
+                        callback: (input) => {
+                            if (input == null || input == undefined) return
+                            if (input.trim() != item.name) {
+                                bootbox.alert('输入的目录名不匹配，已取消')
+                                return
+                            }
+                            this.doDelete(item, true)
+                        }
+                    })
+                    return
+                }
+                bootbox.confirm('确认删除 ' + item.path + '？无法恢复' + (item.is_link ? '（仅删除软链接本身）' : ''), (yes) => {
+                    if (yes) {
+                        this.doDelete(item, false)
+                    }
+                })
+            },
+            async doDelete(item, recursive) {
+                let result
+                try {
+                    result = await axios.post('/api/ssh/file/delete', {
+                        host: this.host,
+                        path: item.path,
+                        recursive: recursive,
+                    }, { timeout: 6 * 60 * 1000 })
+                } catch (e) {
+                    bootbox.alert(errMsg(e))
+                    return
+                }
+                if (result.data.code != 0) {
+                    bootbox.alert(result.data.message)
+                    return
+                }
+                this.getFileList()
+            },
+            confirmOverwrite(name) {
+                return new Promise(resolve => {
+                    bootbox.confirm({
+                        message: '目录下已存在同名文件 ' + name + '，是否覆盖？',
+                        callback: yes => resolve(!!yes),
+                    })
+                })
+            },
+            async uploadFile(event) {
+                const files = event.target.files
+                this.uploadList = Array.from(files).map(file => ({
+                    name: file.name,
+                    progress: 0,
+                    status: '',
+                    errorMsg: '',
+                }))
+                this.uploading = true
+                $('#uploadModal').modal('show')
+
+                for (let i = 0; i < files.length; i++) {
+                    try {
+                        await this.doUploadFile(files[i], i)
+                    } catch (e) {
+                        this.uploadList[i].status = 'error'
+                        this.uploadList[i].errorMsg = errMsg(e)
+                    }
+                }
+                this.uploading = false
+                if (this.$refs.fileInput) {
+                    this.$refs.fileInput.value = ''
+                }
+                this.getFileList()
+            },
+            async postFile(file, index, overwrite) {
+                const formData = new FormData()
+                formData.append('host', this.host)
+                formData.append('path', this.dir)
+                formData.append('file', file)
+                if (overwrite) {
+                    formData.append('overwrite', '1')
+                }
+                return axios.post('/api/ssh/file/upload', formData, {
+                    headers: { 'Content-Type': 'multipart/form-data' },
+                    onUploadProgress: (progressEvent) => {
+                        let percent = 0
+                        if (progressEvent.total) {
+                            // 到 99% 为止，服务端写入远端完成后才算 100%
+                            percent = Math.min(99, Math.round((progressEvent.loaded / progressEvent.total) * 100))
+                        }
+                        this.uploadList[index].progress = percent
+                    }
+                })
+            },
+            async doUploadFile(file, index) {
+                let result = await this.postFile(file, index, false)
+                if (result.data && result.data.code == CODE_FILE_EXISTS) {
+                    // 弹确认框前先隐藏上传 modal，避免两个 modal 叠加遮挡
+                    $('#uploadModal').modal('hide')
+                    let yes = await this.confirmOverwrite(file.name)
+                    $('#uploadModal').modal('show')
+                    if (!yes) {
+                        this.uploadList[index].status = 'skipped'
+                        this.uploadList[index].progress = 100
+                        return
+                    }
+                    result = await this.postFile(file, index, true)
+                }
+                if (!result.data || result.data.code != 0) {
+                    throw new Error(result.data && result.data.message ? result.data.message : '上传失败')
+                }
+                this.uploadList[index].progress = 100
+            },
+        }
+    }
+</script>

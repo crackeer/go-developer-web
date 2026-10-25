@@ -1,0 +1,6 @@
+[
+  {
+    "key_prefix": "example:cache",
+    "description": "示例缓存前缀，按需替换为你自己的 key 规则"
+  }
+]

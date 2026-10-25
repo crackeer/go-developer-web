@@ -1,0 +1,18 @@
+{
+    "title": "HTTP 请求",
+    "page_data": [
+        {
+            "name": "GET 示例",
+            "url": "http://example.com/api/ping",
+            "method": "GET"
+        },
+        {
+            "name": "POST 示例",
+            "url": "http://example.com/api/echo",
+            "method": "POST",
+            "body": {
+                "hello": "world"
+            }
+        }
+    ]
+}

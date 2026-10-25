@@ -1,0 +1,117 @@
+<template id="template">
+    <div class="well">
+        business_init.sh中set_global_env，需要初始化设置的环境变量
+    </div>
+   
+</template>
+<script>
+
+    window.VueObject = {
+        data() {
+            let list = []
+            return {
+                dataList: [],
+                appList : []
+            }
+        },
+        template: '#template',
+        async mounted() {
+            this.getDataList()
+            this.getAppList()
+        },
+        methods: {
+            async getDataList() {
+                let result = await axios.post('/api/mysql/query/saas_config/app', {
+                    page: 1,
+                    page_size: 1000,
+                })
+                this.dataList = result.data.data
+            },
+            async getAppList() {
+                let result = await axios.post('/api/mysql/query/vr_open_platform/app', {
+                    page: 1,
+                    page_size: 1000,
+                })
+                this.appList = result.data.data
+            },
+            async syncApp() {
+                bootbox.prompt({
+                    title: "请输入Source",
+                    inputType: 'textarea',
+                    value: '',
+                    callback: async (result) => {
+                        if (result == null || result.length < 1) {
+                            return
+                        }
+                        this.syncAppBySource(result)
+                    }
+                });
+            },
+            async syncAppBySource(source) {
+                bootboxLoading('获取->' + source + 'source_config.json数据中...')
+                let tmp = await axios.get('/mysql_data/' + source + '/source_config.json')
+                let origin_json = '{}'
+                if (tmp.status == 200) {
+                    origin_json = JSON.stringify(tmp.data)
+                }
+                bootbox.hideAll()
+                bootbox.prompt({
+                    title: "soucre_config的JSON数据(/mysql_data/" + source + "/source_config.json)",
+                    inputType: 'textarea',
+                    value: origin_json,
+                    size: 'large',
+                    callback: async (result) => {
+                        if (result == null || result.length < 1) {
+                            return
+                        }
+                        try {
+                            let data = JSON.parse(result)
+                            for (let i in data.app) {
+                                let result = await axios.post('/api/mysql/create/saas_config/app', data.app[i])
+                            }
+                            for (let i in data.open_platform_app) {
+                                let result = await axios.post('/api/mysql/create/vr_open_platform/app', data.open_platform_app[i])
+                            }
+                            bootbox.alert("同步成功", () => {
+                                window.location.reload()
+                            })
+                        } catch (e) {
+                            alert(e)
+                        }
+                    }
+                });
+            },
+            toDelete(item) {
+                bootbox.confirm("确认删除？", async (yes) => {
+                    if (!yes) {
+                        return
+                    }
+                    let result = await axios.post('/api/mysql/delete/saas_config/app/' + item.id)
+                    if (result.data.code != 0) {
+                        bootbox.alert(result.data.message)
+                        return
+                    }
+                    bootbox.alert("删除成功", () => {
+                        window.location.reload()
+                    })
+                })
+            },
+            toDeleteApp(item) {
+                bootbox.confirm("确认删除？", async (yes) => {
+                    if (!yes) {
+                        return
+                    }
+                    let result = await axios.post('/api/mysql/delete/vr_open_platform/app/' + item.id)
+                    if (result.data.code != 0) {
+                        bootbox.alert(result.data.message)
+                        return
+                    }
+                    bootbox.alert("删除成功", () => {
+                        window.location.reload()
+                    })
+                })
+            }
+        }
+
+    }
+</script>

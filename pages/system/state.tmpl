@@ -1,0 +1,218 @@
+<style>
+    @keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+    }
+</style>
+<template id="template">
+    <div class="panel panel-default">
+        <div class="panel-heading">加密狗状态</div>
+        <div class="panel-body">
+            <p v-if="dongleStatus">可用</p>
+            <p v-else>不可用，错误信息：{{message}}</p>
+        </div>
+    </div>
+
+    <div class="panel panel-default">
+        <div class="panel-heading clearfix">
+            <strong class="pull-left" style="padding-top: 6px;">MySQL&amp;Redis</strong>
+            <button type="button" class="btn btn-primary btn-sm pull-right" :disabled="storeLoading"
+                @click="loadStoreState">
+                <span v-if="storeLoading" class="glyphicon glyphicon-refresh" style="animation: spin 1s linear infinite;"></span>
+                {{ storeLoading ? '检测中...' : '检测' }}
+            </button>
+        </div>
+        <div class="panel-body">
+            <p v-if="storeError" class="text-danger">{{ storeError }}</p>
+            <p v-if="storeLoading && !storeItems.length" class="text-muted">加载中...</p>
+            <table v-if="storeItems.length" class="table table-bordered table-condensed" style="margin-bottom: 8px;">
+                <thead>
+                    <tr>
+                        <th>名称</th>
+                        <th>地址</th>
+                        <th>状态</th>
+                        <th>延迟</th>
+                        <th>错误信息</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr v-for="item in storeItems" :key="item.key">
+                        <td>{{ item.name }}</td>
+                        <td>{{ item.address || '-' }}</td>
+                        <td>
+                            <span v-if="item.status === 'ok'" class="label label-success">正常</span>
+                            <span v-else-if="item.status === 'fail'" class="label label-danger">异常</span>
+                            <span v-else class="label label-default">未配置</span>
+                        </td>
+                        <td>{{ item.status === 'not_configured' ? '-' : item.latency_ms + ' ms' }}</td>
+                        <td class="text-danger" style="word-break: break-all;">{{ item.error || '-' }}</td>
+                    </tr>
+                </tbody>
+            </table>
+            <p v-if="storeCheckedAt" class="text-muted" style="margin-bottom: 0;">最近检测：{{ storeCheckedAt }}</p>
+        </div>
+    </div>
+
+    <div class="panel panel-default">
+        <div class="panel-heading clearfix">
+            <strong class="pull-left" style="padding-top: 6px;">服务连通性验证</strong>
+            <button type="button" class="btn btn-primary btn-sm pull-right" :disabled="verifying"
+                @click="runVerify">
+                <span v-if="verifying" class="glyphicon glyphicon-refresh" style="animation: spin 1s linear infinite;"></span>
+                {{ verifying ? '检测中...' : '检测' }}
+            </button>
+        </div>
+        <div class="panel-body">
+            <table class="table table-bordered table-condensed" style="margin-bottom: 0;">
+                <thead>
+                    <tr>
+                        <th style="width: 140px;">类型</th>
+                        <th>名称</th>
+                        <th>Host</th>
+                        <th style="width: 80px;">结果</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template v-for="(group, gi) in verifyGroups">
+                        <tr v-for="(item, i) in group.items" :key="'g-' + gi + '-' + i">
+                            <td v-if="i === 0" :rowspan="group.items.length" style="vertical-align: middle;">
+                                {{ group.category }}
+                            </td>
+                            <td>{{ item.name }}</td>
+                            <td style="word-break: break-all;" :title="item.url">{{ item.host || '-' }}</td>
+                            <td style="width: 120px;">
+                                <span v-if="item.checkOk === true" class="text-success">✓</span>
+                                <span v-else-if="item.checkOk === false" class="text-danger">✗ 访问异常</span>
+                                <span v-else class="text-muted">-</span>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</template>
+<script>
+    function mapApiListWithStatus(arr, category) {
+        if (!arr || !Array.isArray(arr)) {
+            return [];
+        }
+        return arr.map(function (item) {
+            var o = {};
+            for (var k in item) {
+                if (Object.prototype.hasOwnProperty.call(item, k)) {
+                    o[k] = item[k];
+                }
+            }
+            o.category = category;
+            o.host = extractHost(o.url);
+            o.checkOk = null;
+            return o;
+        });
+    }
+    function extractHost(url) {
+        if (!url) {
+            return '';
+        }
+        try {
+            return new URL(url).host;
+        } catch (e) {
+            var m = String(url).match(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\/([^\/?#]+)/);
+            if (m) {
+                return m[1];
+            }
+            return String(url).replace(/^\/+/, '').split(/[\/?#]/)[0];
+        }
+    }
+    window.VueObject = {
+        data() {
+            var pd = (typeof window.PageData !== 'undefined' && window.PageData) ? window.PageData : {};
+            var businessList = mapApiListWithStatus(pd.business_api_list, '业务 API');
+            var frontendList = mapApiListWithStatus(pd.frontend_list, '前端服务');
+            var infraList = mapApiListWithStatus(pd.infra_api_list, '基础设施服务');
+            return {
+                dongleStatus: false,
+                message: '',
+                businessList: businessList,
+                infraList: infraList,
+                frontendList: frontendList,
+                verifyGroups: [
+                    { category: '业务 API', items: businessList },
+                    { category: '前端服务', items: frontendList },
+                    { category: '基础设施服务', items: infraList },
+                ],
+                verifying: false,
+                storeItems: [],
+                storeCheckedAt: '',
+                storeLoading: false,
+                storeError: '',
+            };
+        },
+        template: '#template',
+        async mounted() {
+            this.loadStoreState();
+            this.runVerify();
+            await this.getDongleStatus();
+        },
+        methods: {
+            async loadStoreState() {
+                this.storeLoading = true;
+                this.storeError = '';
+                try {
+                    var res = await axios.get('/api/system/store_state');
+                    if (!res.data || res.data.code !== 0) {
+                        this.storeError = (res.data && res.data.message) ? res.data.message : '接口返回异常';
+                        return;
+                    }
+                    var d = res.data.data || {};
+                    this.storeItems = d.items || [];
+                    this.storeCheckedAt = d.checked_at || '';
+                } catch (e) {
+                    this.storeError = e && e.message ? e.message : String(e);
+                } finally {
+                    this.storeLoading = false;
+                }
+            },
+            async getDongleStatus() {
+                var result = await httpGet('http://dongle-server.business.svc.cluster.local/dongle/status');
+                if (result.code != 0) {
+                    bootbox.alert(result.status);
+                    return;
+                }
+                var result1 = JSON.parse(result.data);
+                this.dongleStatus = result1.available;
+                this.message = result1.message;
+            },
+            async runVerify() {
+                var self = this;
+                this.verifying = true;
+                var runList = async function (list) {
+                    for (var i = 0; i < list.length; i++) {
+                        var item = list[i];
+                        try {
+                            var res = await doHttpRequest(
+                                item.method || 'GET',
+                                item.url,
+                                {},
+                                {},
+                                {},
+                                item.timeout != null ? item.timeout : 30
+                            );
+                            item.checkOk = res.code === 0;
+                        } catch (e) {
+                            item.checkOk = false;
+                        }
+                    }
+                };
+                try {
+                    await runList(this.businessList);
+                    await runList(this.frontendList);
+                    await runList(this.infraList);
+
+                } finally {
+                    self.verifying = false;
+                }
+            },
+        },
+    };
+</script>

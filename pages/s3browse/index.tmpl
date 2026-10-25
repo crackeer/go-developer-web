@@ -1,0 +1,264 @@
+<template id="template">
+    <div class="well">
+        <p> <strong>快捷方式：</strong>
+            <template v-for="item in quickDir">
+                <button class="btn btn-sm btn-link" @click="goQuickDir(item.path)">{{item.name}}</button>
+            </template>
+        </p>
+        <hr />
+    </div>
+
+    <p>{{dir}}</p>
+    <div class="table-responsive">
+<table class="table table-bordered table-condensed">
+        <thead>
+            <tr>
+                <th>名字</th>
+                <th>大小</th>
+                <th>修改时间</th>
+                <th>操作</th>
+            </tr>
+        <tbody>
+            <tr>
+                <td>
+                    ..
+                </td>
+                <td>
+                    .
+                </td>
+                <td>
+                    .
+                </td>
+                <td>
+                    <button class="btn btn-sm btn-link" @click="goUpper">
+                        上一级
+                    </button>
+                </td>
+            </tr>
+            <tr v-for="(item, i) in this.fileList">
+                <td v-if="item.type =='folder'">
+                    <a :href="'/s3browse/index?dir=' + item.path">
+                        {{item.key}}
+                    </a>
+                </td>
+                <td v-else>
+                    {{item.key}}
+                </td>
+                <td>
+                    {{item.size}}
+                </td>
+                <td>
+                    {{item.lastModified}}
+                </td>
+                <td>
+
+                    <button class="btn btn-sm btn-link" @click="download(item)">下载</button>
+                    <button class="btn btn-sm btn-link" @click="getPublicURL(item)"
+                    v-if="item.path.indexOf(window.PageData.public_bucket) >= 0">公有bucket下载链接</button>
+                </td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+    <div class="modal fade" id="loading" tabindex="-1" role="dialog" aria-labelledby="myModalLabel"
+        data-backdrop='static'>
+        <div class="modal-dialog" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h4 class="modal-title" id="myModalLabel">提示</h4>
+                </div>
+                <div class="modal-body">
+                    正在上传中，请稍后...
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="textModal" tabindex="-1" role="dialog" aria-labelledby="myModalLabel"
+        data-backdrop='static'>
+        <div class="modal-dialog" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h4 class="modal-title" id="myModalLabel">数据</h4>
+                </div>
+                <div class="modal-body">
+                    <textarea class="form-control" :value="textData" rows="10"></textarea>
+                </div>
+            </div>
+        </div>
+    </div>
+</template>
+<script>
+    const ProtectedDir = [
+        '/etc', '/sys', '/usr', '/boot', '/proc', '/media', '/opt', '/run', '/srv', '/var'
+    ]
+    function isProtectedDir(dir) {
+        if (dir == '/') {
+            return true
+        }
+        for (var i in ProtectedDir) {
+            if (dir.indexOf(ProtectedDir[i]) == 0) {
+                return true
+            }
+        }
+        return false
+    }
+
+    const quickDirList = [
+        { 'path': '', name: '根目录' },
+        { 'path': window.PageData.private_bucket + '/vrfile/local/rawdata', name: 'project' },
+        { 'path': window.PageData.public_bucket +'/local/auto3dhd', name: 'VR产物' },
+        { 'path': window.PageData.private_bucket +'vrfile/local/vrcompress', name: 'VR打包' },
+        { 'path': window.PageData.private_bucket + '/vrfile/local/poincare_rawdata', name: '庞加莱' },
+        { 'path': window.PageData.public_bucket + '/local/poincare', name: '庞加莱VR' },
+        { 'path': window.PageData.private_bucket + '/vrfile/local/aerophoto_rawdata', name: '倾斜摄影' },
+        { 'path': window.PageData.public_bucket +'/local/aerophoto', name: '倾斜摄影VR' },
+        { 'path': window.PageData.public_bucket , name: 'vr-public数据' },
+    ]
+
+
+    window.VueObject = {
+        data() {
+            let list = []
+            return {
+                dir: '/root/',
+                fileList: [],
+                quickDir: quickDirList,
+                textData: '',
+                uploadProgress: null,
+                totalSize: 0,
+                uploadFiles: 0,
+                totalFiles: 0,
+                uploadedSize: 0,
+            }
+        },
+        template: '#template',
+        async mounted() {
+            this.dir = getQuery('dir', '').replaceAll('//', '/')
+            await this.getFileList()
+        },
+        methods: {
+            async getFileList() {
+                try {
+                    let path = window.PageData.alias + "/" + this.dir
+                    let result = await axios.post('/api/execute/mc', {
+                        "params": [
+                            "ls", '--json', path
+                        ]
+                    })
+                    let lines = result.data.data.output.trim().split('\n')
+                    let jsonData = '[' + lines.join(',') + ']'
+                    console.log(jsonData)
+                    let list = JSON.parse(jsonData)
+                    for (var i in list) {
+                        if (this.dir.endsWith('/')) {
+                            list[i].path = this.dir + list[i].key
+                        }  else {
+                            list[i].path = this.dir + '/' + list[i].key
+                        }
+                    }
+                    this.fileList = list
+                } catch (e) {
+                    console.log(e)
+                    bootbox.alert(e.message)
+                }
+              
+            },
+            async download(item) {
+                bootboxLoading('从oss下载中...')
+                let fromPath = window.PageData.alias + '/' + item.path
+                if (item.path.startsWith('/')) {
+                    fromPath = window.PageData.alias + item.path
+                }
+                let localPath = "/tmp/" + getNowTimeKey()
+                let result = await axios.post('/api/execute/mc', {
+                    "params": [
+                        "cp", '-recursive', fromPath, localPath + "/",
+                    ]
+                })
+                if (result.data.code < 0) {
+                    bootbox.alert(result.data.message)
+                    return
+                }
+
+                bootboxLoading('下载完成，开始打包文件...')
+                let tarFile = localPath + ".tar.gz"
+                let result1 = await axios.post('/api/execute/tar', {
+                    "params": [
+                        "-czf", tarFile, localPath,
+                    ]
+                })
+                bootbox.hideAll()
+                bootbox.alert("下载完成")
+                window.open('/api/file/download?file=' + tarFile, '_blank')
+
+
+            },
+            downloadfile(file) {
+                window.open('/api/file/download?file=' + file, '_blank')
+            },
+            goQuickDir(path) {
+                windowReloadQuery({
+                    dir: path
+                })
+            },
+            async goUpper() {
+                if (this.dir == '/' || this.dir.length < 1) {
+                    return
+                }
+                let parts = this.dir.split('/')
+
+                let last = parts.pop()
+                if (last.trim().length < 1) {
+                    parts.pop()
+                }
+                let parentDir = parts.join('/')
+                if (parentDir.length < 1) {
+                    parentDir = '/'
+                }
+                window.location.href = window.location.pathname + "?dir=" + parentDir
+            },
+            handleDelete(item) {
+                bootbox.confirm('确认删除该文件？无法恢复', (result) => {
+                    if (!result) {
+                        return
+                    }
+                    axios.get('/api/file/delete?file=' + item.path).then((result) => {
+                        if (result.data.code < 0) {
+                            bootbox.alert(result.data.message)
+                        } else {
+                            bootbox.alert("删除成功", () => {
+                                this.getFileList()
+                            })
+                        }
+                    })
+                })
+            },
+            showCreateDir() {
+                bootbox.prompt("请输入文件夹名字", (result) => {
+                    if (result == null || result == undefined) return
+                    if (result.trim().length < 1) {
+                        return
+                    }
+                    axios.get('/api/file/mkdirall?dir=' + this.dir + "/" + result.trim()).then((result) => {
+                        if (result.data.code < 0) {
+                            bootbox.alert(result.data.message)
+                        } else {
+                            bootbox.alert("创建成功", () => {
+                                this.getFileList()
+                            })
+                        }
+                    })
+                });
+            },
+            getPublicURL(item) {
+                if (item.path.indexOf(window.PageData.public_bucket) >= 0 && item.type != 'folder') {
+                    let fullPath =item.url + item.key
+                    bootbox.alert("下载链接：" + fullPath)
+                } else {
+                    bootbox.alert("无法获取")
+                }
+            }
+        }
+    }
+</script>

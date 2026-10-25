@@ -1,0 +1,391 @@
+<template id="template">
+    <div>
+        <div class="well" style="margin-bottom: 12px;">
+            <ul class="nav nav-tabs" style="margin-bottom: 12px;">
+                <li :class="{ active: mode === 'prefix' }">
+                    <a href="javascript:;" @click="mode = 'prefix'">按 Prefix 扫描</a>
+                </li>
+                <li :class="{ active: mode === 'key' }">
+                    <a href="javascript:;" @click="mode = 'key'">按 Key 查询</a>
+                </li>
+                <li :class="{ active: mode === 'random' }">
+                    <a href="javascript:;" @click="mode = 'random'">随机 100 个 KEY</a>
+                </li>
+            </ul>
+
+            <div v-show="mode === 'prefix'">
+                <div class="form-inline">
+                    <div class="form-group" style="margin-right: 10px;">
+                        <label style="margin-right: 6px;">Prefix：</label>
+                        <select class="form-control input-sm" style="min-width: 320px;" v-model="selectedPrefix"
+                            @change="onSelectPrefix">
+                            <option value="">-- 选择一个 prefix --</option>
+                            <option v-for="(p, i) in prefixOptions" :key="i" :value="p.key_prefix">
+                                {{p.key_prefix}}{{p.description ? '（' + p.description + '）' : ''}}
+                            </option>
+                        </select>
+                    </div>
+                    <div class="form-group" style="margin-right: 10px;">
+                        <input type="text" class="form-control input-sm" style="min-width: 320px;"
+                            v-model="prefixInput" placeholder="或自定义输入 prefix（扫描 prefix* ）"
+                            @keyup.enter="doScan" />
+                    </div>
+                    <button class="btn btn-primary btn-sm" @click="doScan" :disabled="scanning">
+                        {{scanning ? '扫描中...' : '扫描前 1000 条 KEY'}}
+                    </button>
+                </div>
+                <p class="help-block" style="margin: 8px 0 0;">
+                    使用 SCAN 游标遍历，匹配 <code>prefix*</code>，最多返回 1000 条，并查询每条的类型与值。
+                </p>
+            </div>
+
+            <div v-show="mode === 'key'">
+                <div class="form-inline">
+                    <div class="form-group" style="margin-right: 10px;">
+                        <label style="margin-right: 6px;">Key：</label>
+                        <input type="text" class="form-control input-sm" style="min-width: 420px;" v-model="keyInput"
+                            placeholder="输入完整 KEY" @keyup.enter="doGetKey" />
+                    </div>
+                    <button class="btn btn-primary btn-sm" @click="doGetKey" :disabled="keyLoading">
+                        {{keyLoading ? '查询中...' : '查询'}}
+                    </button>
+                </div>
+            </div>
+
+            <div v-show="mode === 'random'">
+                <button class="btn btn-primary btn-sm" @click="doRandom" :disabled="randomLoading">
+                    {{randomLoading ? '查询中...' : '随机获取 100 个 KEY'}}
+                </button>
+                <p class="help-block" style="margin: 8px 0 0;">
+                    使用 <code>RANDOMKEY</code> 随机取样并去重，最多返回 100 条，并查询每条的类型与值。
+                </p>
+            </div>
+        </div>
+
+        <div v-show="mode === 'prefix'">
+            <div style="margin-bottom: 8px; color: #555;" v-if="scanMeta.match">
+                匹配 <code>{{scanMeta.match}}</code>，返回 <strong>{{scanMeta.count}}</strong> 条<span
+                    v-if="scanMeta.reached" class="text-danger">（已达 1000 条上限，可能还有更多）</span>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-bordered table-condensed table-hover">
+                    <thead>
+                        <tr>
+                            <th style="width: 50px;">#</th>
+                            <th>key</th>
+                            <th style="width: 80px;">type</th>
+                            <th style="width: 90px;">ttl(s)</th>
+                            <th>value</th>
+                            <th style="width: 140px;">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr v-for="(item, i) in scanRows" :key="item.key || i">
+                            <td>{{i + 1}}</td>
+                            <td style="word-break: break-all;">{{item.key}}</td>
+                            <td>{{item.type}}</td>
+                            <td>{{ttlText(item.ttl)}}</td>
+                            <td style="max-width: 640px;">
+                                <span v-if="item.error" class="text-danger">{{item.error}}</span>
+                                <template v-else>
+                                    <pre style="white-space: pre-wrap; word-break: break-all; max-height: 240px; overflow: auto; margin: 0;">{{formatValue(item.value)}}</pre>
+                                    <span v-if="item.truncated" class="text-warning">（已截断）</span>
+                                </template>
+                            </td>
+                            <td>
+                                <button class="btn btn-xs btn-link" style="padding: 0 4px;"
+                                    @click="viewValue(item)">查看Value</button>
+                                <button class="btn btn-xs btn-link text-danger" style="padding: 0 4px;"
+                                    @click="deleteKey(item, 'scan')">删除</button>
+                            </td>
+                        </tr>
+                        <tr v-if="scanRows.length < 1">
+                            <td colspan="6" style="text-align: center; color: #999;">
+                                {{scanning ? '扫描中...' : '暂无数据'}}
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div v-show="mode === 'key'">
+            <div class="panel panel-default" v-if="keyResult">
+                <div class="panel-heading">
+                    <strong style="word-break: break-all;">{{keyResult.key}}</strong>
+                </div>
+                <div class="panel-body">
+                    <div v-if="keyResult.error" class="text-danger">{{keyResult.error}}</div>
+                    <template v-else>
+                        <p><strong>type：</strong>{{keyResult.type}}</p>
+                        <p><strong>ttl：</strong>{{ttlText(keyResult.ttl)}}</p>
+                        <p v-if="keyResult.type === 'none'" class="text-muted">该 KEY 不存在</p>
+                        <div v-else>
+                            <strong>value：</strong>
+                            <span v-if="keyResult.truncated" class="text-warning">（已截断）</span>
+                            <pre style="white-space: pre-wrap; word-break: break-all; max-height: 60vh; overflow: auto;">{{formatValue(keyResult.value)}}</pre>
+                        </div>
+                    </template>
+                </div>
+            </div>
+            <div v-else style="color: #999;">输入 KEY 后点击查询</div>
+        </div>
+
+        <div v-show="mode === 'random'">
+            <div style="margin-bottom: 8px; color: #555;" v-if="randomRequested">
+                随机返回 <strong>{{randomRows.length}}</strong> 条
+            </div>
+            <div class="table-responsive">
+                <table class="table table-bordered table-condensed table-hover">
+                    <thead>
+                        <tr>
+                            <th style="width: 50px;">#</th>
+                            <th>key</th>
+                            <th style="width: 80px;">type</th>
+                            <th style="width: 90px;">ttl(s)</th>
+                            <th>value</th>
+                            <th style="width: 140px;">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr v-for="(item, i) in randomRows" :key="item.key || i">
+                            <td>{{i + 1}}</td>
+                            <td style="word-break: break-all;">{{item.key}}</td>
+                            <td>{{item.type}}</td>
+                            <td>{{ttlText(item.ttl)}}</td>
+                            <td style="max-width: 640px;">
+                                <span v-if="item.error" class="text-danger">{{item.error}}</span>
+                                <template v-else>
+                                    <pre style="white-space: pre-wrap; word-break: break-all; max-height: 240px; overflow: auto; margin: 0;">{{formatValue(item.value)}}</pre>
+                                    <span v-if="item.truncated" class="text-warning">（已截断）</span>
+                                </template>
+                            </td>
+                            <td>
+                                <button class="btn btn-xs btn-link" style="padding: 0 4px;"
+                                    @click="viewValue(item)">查看Value</button>
+                                <button class="btn btn-xs btn-link text-danger" style="padding: 0 4px;"
+                                    @click="deleteKey(item, 'random')">删除</button>
+                            </td>
+                        </tr>
+                        <tr v-if="randomRows.length < 1">
+                            <td colspan="6" style="text-align: center; color: #999;">
+                                {{randomLoading ? '查询中...' : '暂无数据'}}
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="redisValueModal" tabindex="-1" role="dialog" aria-labelledby="redisValueModalLabel">
+        <div class="modal-dialog modal-lg" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span
+                            aria-hidden="true">&times;</span></button>
+                    <h4 class="modal-title" id="redisValueModalLabel" style="word-break: break-all;">
+                        {{valueModal.key}}
+                    </h4>
+                </div>
+                <div class="modal-body">
+                    <p><strong>type：</strong>{{valueModal.type}}　<strong>ttl：</strong>{{ttlText(valueModal.ttl)}}</p>
+                    <span v-if="valueModal.truncated" class="text-warning">（已截断）</span>
+                    <pre style="white-space: pre-wrap; word-break: break-all; max-height: 60vh; overflow: auto;">{{formatValue(valueModal.value)}}</pre>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-default" data-dismiss="modal">关闭</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</template>
+
+<script>
+    window.VueObject = {
+        data() {
+            return {
+                mode: 'prefix',
+                prefixOptions: [],
+                selectedPrefix: '',
+                prefixInput: '',
+                scanning: false,
+                scanRows: [],
+                scanMeta: { match: '', count: 0, reached: false },
+                keyInput: '',
+                keyLoading: false,
+                keyResult: null,
+                randomLoading: false,
+                randomRequested: false,
+                randomRows: [],
+                valueModal: { key: '', type: '', ttl: 0, value: null, truncated: false },
+            }
+        },
+        template: '#template',
+        async mounted() {
+            await this.loadPrefixes()
+        },
+        methods: {
+            async loadPrefixes() {
+                try {
+                    const resp = await axios.get('/redis/redis_key_prefixes.json', { responseType: 'json' })
+                    const list = resp && resp.data
+                    this.prefixOptions = Array.isArray(list) ? list : []
+                } catch (e) {
+                    this.prefixOptions = []
+                }
+            },
+            onSelectPrefix() {
+                if (this.selectedPrefix) {
+                    this.prefixInput = this.selectedPrefix
+                }
+            },
+            ttlText(ttl) {
+                if (ttl === -1) {
+                    return '永不过期'
+                }
+                if (ttl === -2) {
+                    return '不存在'
+                }
+                return ttl
+            },
+            formatValue(v) {
+                if (v == null) {
+                    return ''
+                }
+                if (typeof v === 'string') {
+                    return v
+                }
+                try {
+                    return JSON.stringify(v, null, 2)
+                } catch (e) {
+                    return String(v)
+                }
+            },
+            async doScan() {
+                const prefix = (this.prefixInput || this.selectedPrefix || '').trim()
+                if (!prefix) {
+                    bootbox.alert('请选择或输入一个 prefix')
+                    return
+                }
+                if (this.scanning) {
+                    return
+                }
+                try {
+                    this.scanning = true
+                    this.scanRows = []
+                    this.scanMeta = { match: '', count: 0, reached: false }
+                    bootboxLoading('扫描中...')
+                    const resp = await axios.get('/api/redis/scan', { params: { prefix: prefix } })
+                    bootbox.hideAll()
+                    this.scanning = false
+                    if (!resp.data || resp.data.code !== 0) {
+                        bootbox.alert('扫描失败：' + ((resp.data && resp.data.message) || '未知错误'))
+                        return
+                    }
+                    const d = resp.data.data || {}
+                    this.scanRows = Array.isArray(d.keys) ? d.keys : []
+                    this.scanMeta = { match: d.match || '', count: d.count || 0, reached: !!d.reached }
+                } catch (e) {
+                    bootbox.hideAll()
+                    this.scanning = false
+                    bootbox.alert('扫描失败：' + (e && e.message ? e.message : e))
+                }
+            },
+            async doGetKey() {
+                const key = (this.keyInput || '').trim()
+                if (!key) {
+                    bootbox.alert('请输入 KEY')
+                    return
+                }
+                if (this.keyLoading) {
+                    return
+                }
+                try {
+                    this.keyLoading = true
+                    this.keyResult = null
+                    bootboxLoading('查询中...')
+                    const resp = await axios.get('/api/redis/get', { params: { key: key } })
+                    bootbox.hideAll()
+                    this.keyLoading = false
+                    if (!resp.data || resp.data.code !== 0) {
+                        bootbox.alert('查询失败：' + ((resp.data && resp.data.message) || '未知错误'))
+                        return
+                    }
+                    this.keyResult = resp.data.data || null
+                } catch (e) {
+                    bootbox.hideAll()
+                    this.keyLoading = false
+                    bootbox.alert('查询失败：' + (e && e.message ? e.message : e))
+                }
+            },
+            async doRandom() {
+                if (this.randomLoading) {
+                    return
+                }
+                try {
+                    this.randomLoading = true
+                    this.randomRows = []
+                    bootboxLoading('查询中...')
+                    const resp = await axios.get('/api/redis/random')
+                    bootbox.hideAll()
+                    this.randomLoading = false
+                    this.randomRequested = true
+                    if (!resp.data || resp.data.code !== 0) {
+                        bootbox.alert('查询失败：' + ((resp.data && resp.data.message) || '未知错误'))
+                        return
+                    }
+                    const d = resp.data.data || {}
+                    this.randomRows = Array.isArray(d.keys) ? d.keys : []
+                } catch (e) {
+                    bootbox.hideAll()
+                    this.randomLoading = false
+                    bootbox.alert('查询失败：' + (e && e.message ? e.message : e))
+                }
+            },
+            viewValue(item) {
+                this.valueModal = {
+                    key: item.key || '',
+                    type: item.type || '',
+                    ttl: item.ttl,
+                    value: item.value,
+                    truncated: !!item.truncated,
+                }
+                $('#redisValueModal').modal('show')
+            },
+            async deleteKey(item, source) {
+                const key = item && item.key
+                if (!key) {
+                    return
+                }
+                bootbox.confirm('确认删除 KEY【' + key + '】？此操作不可恢复！', async (yes) => {
+                    if (!yes) {
+                        return
+                    }
+                    try {
+                        bootboxLoading('删除中...')
+                        const resp = await axios.delete('/api/redis/delete', { params: { key: key } })
+                        bootbox.hideAll()
+                        if (!resp.data || resp.data.code !== 0) {
+                            bootbox.alert('删除失败：' + ((resp.data && resp.data.message) || '未知错误'))
+                            return
+                        }
+                        const d = resp.data.data || {}
+                        if (!d.deleted) {
+                            bootbox.alert('该 KEY 不存在或已被删除')
+                        }
+                        // 从对应表格移除该行
+                        if (source === 'scan') {
+                            this.scanRows = this.scanRows.filter((r) => r.key !== key)
+                        } else if (source === 'random') {
+                            this.randomRows = this.randomRows.filter((r) => r.key !== key)
+                        }
+                    } catch (e) {
+                        bootbox.hideAll()
+                        bootbox.alert('删除失败：' + (e && e.message ? e.message : e))
+                    }
+                })
+            },
+        }
+    }
+</script>

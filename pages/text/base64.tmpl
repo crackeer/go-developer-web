@@ -1,0 +1,38 @@
+<template id="template">
+    <div style="padding: 10px 7.5%; text-align: center;">
+        <button type="button" class="btn btn-primary" @click="decode" style="margin-right: 15px;">Decode</button>
+        <button type="button" class="btn btn-primary" @click="encode">Encode</button>
+    </div>
+    <div class="row">
+        <div class="col-md-6">
+            <div class="panel-heading">原始文本</div>
+            <textarea class="form-control" rows="30" v-model="content"></textarea>
+        </div>
+        <div class="col-md-6">
+            <div class="panel-heading">转换结果</div>
+            <textarea class="form-control" rows="30" v-model="output"></textarea>
+        </div>
+    </div>
+</template>
+<script>
+
+    window.VueObject = {
+        data() {
+            return {
+                content: '',
+                output: '',
+            }
+        },
+        template: '#template',
+        methods: {
+
+            async encode() {
+                this.output = base64Encode(this.content)
+            },
+            async decode() {
+                this.output = base64Decode(this.content)
+            }
+
+        }
+    }
+</script>

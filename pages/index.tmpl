@@ -1,0 +1,404 @@
+<template id="template">
+    <div>
+        <!-- 工具栏：类型筛选 + 搜索 + 新建 -->
+        <div class="well" style="margin-bottom: 12px;">
+            <div class="form-inline" style="margin-bottom: 10px;">
+                <div class="btn-group" style="margin-right: 12px;">
+                    <button class="btn btn-default btn-sm" :class="{ active: activeType === '' }"
+                        @click="changeType('')">全部</button>
+                    <button v-for="meta in typeMetas" :key="meta.type" class="btn btn-default btn-sm"
+                        :class="{ active: activeType === meta.type }" @click="changeType(meta.type)">
+                        {{meta.label}}
+                        <span class="badge" style="margin-left: 4px;">{{typeCount(meta.type)}}</span>
+                    </button>
+                </div>
+                <div class="form-group" style="margin-right: 10px;">
+                    <input type="text" class="form-control input-sm" style="width: 260px;" v-model="keyword"
+                        placeholder="按名称 / 主机 / 用户名过滤" />
+                </div>
+                <button class="btn btn-default btn-sm" @click="load" :disabled="loading">
+                    <span :class="{ 'glyphicon-refresh-animate': loading }" class="glyphicon glyphicon-refresh"></span>
+                    刷新
+                </button>
+                <button class="btn btn-primary btn-sm" style="margin-left: 4px;" @click="openCreate">+ 新建配置</button>
+            </div>
+            <p class="help-block" style="margin: 0;">
+                统一管理 MySQL / FTP / SSH / S3 / Redis 的连接配置，密码加密存储于 SQLite（环境变量 <code>SQLITE_PATH</code>），支持一键连通性测试。
+            </p>
+        </div>
+
+        <!-- 配置列表 -->
+        <div class="table-responsive">
+            <table class="table table-bordered table-condensed table-hover">
+                <thead>
+                    <tr>
+                        <th style="width: 50px;">#</th>
+                        <th style="width: 70px;">类型</th>
+                        <th style="width: 160px;">名称</th>
+                        <th>主机 : 端口</th>
+                        <th style="width: 140px;">用户名</th>
+                        <th>扩展信息</th>
+                        <th style="width: 60px;">状态</th>
+                        <th style="width: 150px;">更新时间</th>
+                        <th style="width: 200px;">操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr v-for="(item, i) in filteredRows" :key="item.id">
+                        <td>{{i + 1}}</td>
+                        <td><span class="label" :class="typeBadge(item.type)">{{typeLabel(item.type)}}</span></td>
+                        <td>
+                            <strong>{{item.name}}</strong>
+                            <span v-if="testResult[item.id]"
+                                :class="testResult[item.id].ok ? 'text-success' : 'text-danger'"
+                                :title="testResult[item.id].message" style="margin-left: 4px; cursor: default;">
+                                {{testResult[item.id].ok ? '✔ ' + testResult[item.id].cost_ms + 'ms' : '✘ 失败'}}
+                            </span>
+                        </td>
+                        <td style="white-space: nowrap;">{{item.host}}{{item.port > 0 ? ':' + item.port : ''}}</td>
+                        <td>{{item.username}}</td>
+                        <td style="word-break: break-all;">{{extraText(item)}}</td>
+                        <td>
+                            <span :class="item.enabled === 1 ? 'text-success' : 'text-muted'">
+                                {{item.enabled === 1 ? '启用' : '禁用'}}
+                            </span>
+                        </td>
+                        <td>{{item.updated_at}}</td>
+                        <td>
+                            <button class="btn btn-xs btn-link" style="padding: 0 4px;" @click="testOne(item)"
+                                :disabled="testing[item.id] === true">
+                                {{testing[item.id] ? '测试中...' : '测试'}}
+                            </button>
+                            <button class="btn btn-xs btn-link" style="padding: 0 4px;" @click="openEdit(item)">编辑</button>
+                            <button class="btn btn-xs btn-link text-danger" style="padding: 0 4px;"
+                                @click="removeOne(item)">删除</button>
+                        </td>
+                    </tr>
+                    <tr v-if="filteredRows.length < 1">
+                        <td colspan="9" style="text-align: center; color: #999;">
+                            {{loading ? '加载中...' : '暂无配置，点击右上角「新建配置」添加'}}
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- 新建 / 编辑 弹窗 -->
+        <div class="modal fade" id="configModal" tabindex="-1" role="dialog">
+            <div class="modal-dialog" role="document">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span
+                                aria-hidden="true">&times;</span></button>
+                        <h4 class="modal-title">{{editingId > 0 ? '编辑配置（' + typeLabel(form.type) + '）' : '新建配置'}}</h4>
+                    </div>
+                    <div class="modal-body">
+                        <div class="form-horizontal">
+                            <div class="form-group">
+                                <label class="col-sm-3 control-label">类型<span class="text-danger">*</span></label>
+                                <div class="col-sm-8">
+                                    <select class="form-control input-sm" v-model="form.type"
+                                        :disabled="editingId > 0" @change="onTypeChange">
+                                        <option v-for="meta in typeMetas" :key="meta.type" :value="meta.type">
+                                            {{meta.label}}
+                                        </option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label class="col-sm-3 control-label">名称<span class="text-danger">*</span></label>
+                                <div class="col-sm-8">
+                                    <input type="text" class="form-control input-sm" v-model="form.name"
+                                        placeholder="如：prod-mysql-main / 内网-FTP" />
+                                </div>
+                            </div>
+                            <div class="form-group" v-if="currentMeta">
+                                <label class="col-sm-3 control-label">{{currentMeta.host_label}}<span
+                                        class="text-danger" v-if="currentMeta.require_host">*</span></label>
+                                <div class="col-sm-8">
+                                    <input type="text" class="form-control input-sm" v-model="form.host"
+                                        :placeholder="currentMeta.host_placeholder" />
+                                </div>
+                            </div>
+                            <div class="form-group" v-if="currentMeta">
+                                <label class="col-sm-3 control-label">端口</label>
+                                <div class="col-sm-8">
+                                    <input type="number" class="form-control input-sm" v-model.number="form.port"
+                                        :placeholder="currentMeta.default_port > 0 ? '默认 ' + currentMeta.default_port : '可选'" />
+                                </div>
+                            </div>
+                            <div class="form-group" v-if="currentMeta">
+                                <label class="col-sm-3 control-label">{{currentMeta.user_label}}</label>
+                                <div class="col-sm-8">
+                                    <input type="text" class="form-control input-sm" v-model="form.username" />
+                                </div>
+                            </div>
+                            <div class="form-group" v-if="currentMeta">
+                                <label class="col-sm-3 control-label">{{currentMeta.password_label}}</label>
+                                <div class="col-sm-8">
+                                    <input type="password" class="form-control input-sm" v-model="form.password"
+                                        :placeholder="editingId > 0 ? '留空则保留原密码' : ''" autocomplete="new-password" />
+                                </div>
+                            </div>
+                            <div class="form-group" v-for="field in extraFields" :key="field.key">
+                                <label class="col-sm-3 control-label">{{field.label}}<span class="text-danger"
+                                        v-if="field.required">*</span></label>
+                                <div class="col-sm-8">
+                                    <input type="text" class="form-control input-sm" v-model="form.extra[field.key]"
+                                        :placeholder="field.placeholder" />
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label class="col-sm-3 control-label">状态</label>
+                                <div class="col-sm-8" style="padding-top: 6px;">
+                                    <label style="font-weight: normal;">
+                                        <input type="checkbox" v-model="form.enabled" /> 启用
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <span class="text-danger" style="float: left;" v-if="formError">{{formError}}</span>
+                        <button type="button" class="btn btn-default" data-dismiss="modal">取消</button>
+                        <button type="button" class="btn btn-primary" @click="save" :disabled="saving">
+                            {{saving ? '保存中...' : '保存'}}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</template>
+
+<script>
+    window.VueObject = {
+        data() {
+            return {
+                typeMetas: [],
+                activeType: '',
+                keyword: '',
+                rows: [],
+                loading: false,
+                testing: {},
+                testResult: {},
+                editingId: 0,
+                saving: false,
+                formError: '',
+                form: {
+                    type: '',
+                    name: '',
+                    host: '',
+                    port: null,
+                    username: '',
+                    password: '',
+                    extra: {},
+                    enabled: true,
+                },
+            }
+        },
+        computed: {
+            currentMeta() {
+                return this.typeMetas.find(m => m.type === this.form.type) || null
+            },
+            extraFields() {
+                return this.currentMeta ? (this.currentMeta.extra_fields || []) : []
+            },
+            filteredRows() {
+                const kw = this.keyword.trim().toLowerCase()
+                if (!kw) return this.rows
+                return this.rows.filter(row => {
+                    return [row.name, row.host, row.username]
+                        .some(v => String(v || '').toLowerCase().includes(kw))
+                })
+            },
+        },
+        async mounted() {
+            await this.loadTypes()
+            await this.load()
+        },
+        methods: {
+            async loadTypes() {
+                try {
+                    const resp = await axios.get('/api/config/types')
+                    if (resp.data && resp.data.code === 0) {
+                        this.typeMetas = resp.data.data || []
+                    }
+                } catch (e) {
+                    console.error('load types error', e)
+                }
+            },
+            async load() {
+                this.loading = true
+                try {
+                    const resp = await axios.get('/api/config/list', {
+                        params: this.activeType ? { type: this.activeType } : {}
+                    })
+                    if (resp.data && resp.data.code === 0) {
+                        this.rows = resp.data.data || []
+                    } else {
+                        bootbox.alert('加载失败：' + ((resp.data && resp.data.message) || '未知错误'))
+                    }
+                } catch (e) {
+                    bootbox.alert('加载失败：' + e.message)
+                } finally {
+                    this.loading = false
+                }
+            },
+            changeType(type) {
+                if (this.activeType === type) return
+                this.activeType = type
+                this.load()
+            },
+            typeCount(type) {
+                return this.rows.filter(r => r.type === type).length
+            },
+            typeLabel(type) {
+                const meta = this.typeMetas.find(m => m.type === type)
+                return meta ? meta.label : type
+            },
+            typeBadge(type) {
+                const mapping = {
+                    mysql: 'label-primary',
+                    ftp: 'label-warning',
+                    ssh: 'label-success',
+                    s3: 'label-info',
+                    redis: 'label-danger',
+                }
+                return mapping[type] || 'label-default'
+            },
+            extraText(row) {
+                const meta = this.typeMetas.find(m => m.type === row.type)
+                if (!meta || !meta.extra_fields) return ''
+                const parts = []
+                for (const field of meta.extra_fields) {
+                    const value = row.extra ? row.extra[field.key] : ''
+                    if (value) parts.push(field.label + '：' + value)
+                }
+                return parts.join('　')
+            },
+            onTypeChange() {
+                this.form.port = this.currentMeta && this.currentMeta.default_port > 0
+                    ? this.currentMeta.default_port : null
+                this.form.extra = {}
+            },
+            openCreate() {
+                this.editingId = 0
+                this.formError = ''
+                this.form = {
+                    type: this.activeType || (this.typeMetas[0] ? this.typeMetas[0].type : ''),
+                    name: '',
+                    host: '',
+                    port: null,
+                    username: '',
+                    password: '',
+                    extra: {},
+                    enabled: true,
+                }
+                if (this.currentMeta && this.currentMeta.default_port > 0) {
+                    this.form.port = this.currentMeta.default_port
+                }
+                window.jQuery('#configModal').modal('show')
+            },
+            openEdit(row) {
+                this.editingId = row.id
+                this.formError = ''
+                this.form = {
+                    type: row.type,
+                    name: row.name,
+                    host: row.host,
+                    port: row.port > 0 ? row.port : null,
+                    username: row.username,
+                    password: '',
+                    extra: Object.assign({}, row.extra || {}),
+                    enabled: row.enabled === 1,
+                }
+                window.jQuery('#configModal').modal('show')
+            },
+            validateForm() {
+                if (!this.form.type) return '请选择类型'
+                if (!this.form.name.trim()) return '请输入名称'
+                if (this.currentMeta && this.currentMeta.require_host && !this.form.host.trim()) {
+                    return this.currentMeta.host_label + ' 不能为空'
+                }
+                for (const field of this.extraFields) {
+                    if (field.required && !(this.form.extra[field.key] || '').trim()) {
+                        return field.label + ' 不能为空'
+                    }
+                }
+                return ''
+            },
+            async save() {
+                this.formError = this.validateForm()
+                if (this.formError) return
+                this.saving = true
+                try {
+                    const payload = {
+                        type: this.form.type,
+                        name: this.form.name.trim(),
+                        host: this.form.host.trim(),
+                        port: this.form.port || 0,
+                        username: this.form.username,
+                        password: this.form.password,
+                        extra: this.form.extra,
+                        enabled: this.form.enabled ? 1 : 0,
+                    }
+                    const url = this.editingId > 0
+                        ? '/api/config/update/' + this.editingId
+                        : '/api/config/create'
+                    const resp = await axios.post(url, payload)
+                    if (resp.data && resp.data.code === 0) {
+                        window.jQuery('#configModal').modal('hide')
+                        await this.load()
+                    } else {
+                        this.formError = (resp.data && resp.data.message) || '保存失败'
+                    }
+                } catch (e) {
+                    this.formError = '保存失败：' + e.message
+                } finally {
+                    this.saving = false
+                }
+            },
+            async testOne(row) {
+                this.testing = Object.assign({}, this.testing, { [row.id]: true })
+                try {
+                    const resp = await axios.post('/api/config/test/' + row.id, {})
+                    const result = resp.data && resp.data.code === 0 ? resp.data.data : null
+                    if (result) {
+                        this.testResult = Object.assign({}, this.testResult, { [row.id]: result })
+                        if (!result.ok) {
+                            bootbox.alert({
+                                title: '连接失败：' + row.name,
+                                message: '<span class="text-danger">' + result.message + '</span>',
+                            })
+                        }
+                    } else {
+                        bootbox.alert('测试失败：' + ((resp.data && resp.data.message) || '未知错误'))
+                    }
+                } catch (e) {
+                    bootbox.alert('测试失败：' + e.message)
+                } finally {
+                    const next = Object.assign({}, this.testing)
+                    delete next[row.id]
+                    this.testing = next
+                }
+            },
+            removeOne(row) {
+                bootbox.confirm('确认删除配置「' + row.name + '」？该操作不可恢复。', async (confirmed) => {
+                    if (!confirmed) return
+                    try {
+                        const resp = await axios.post('/api/config/delete/' + row.id, {})
+                        if (resp.data && resp.data.code === 0) {
+                            await this.load()
+                        } else {
+                            bootbox.alert('删除失败：' + ((resp.data && resp.data.message) || '未知错误'))
+                        }
+                    } catch (e) {
+                        bootbox.alert('删除失败：' + e.message)
+                    }
+                })
+            },
+        },
+        template: '#template',
+    }
+</script>

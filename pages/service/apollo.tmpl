@@ -1,0 +1,357 @@
+<template id="template">
+    <p>
+        <button type="button" class="btn btn-primary" @click="exportApolloData">导出apollo数据</button> <button type="button" class="btn btn-primary" @click="saveStruct">导出apollo表结构</button> <button type="button" class="btn btn-primary" @click="importApolloData">导入ApolloConfigDB数据</button> <button type="button" class="btn btn-primary" @click="clearDBData">清空apollo</button>
+    </p>
+    <div class="well">
+       apollo列表：
+        <label class="radio-inline" v-for="(item, i) in app_ids">
+            <input type="radio" name="app_id" :value="item" v-model="app_id" @change="changeAppId(item)">{{item}}
+        </label>
+    </div>
+    <div class="row">
+        <div class="col-md-3">
+            <p>Namespace列表</p>
+            <div class="list-group" style="height: 700px; overflow: scroll;" :class="loading ? 'disabled' : ''">
+                <template v-for="(item, i) in namespaces">
+                    <a href="#" class="list-group-item" :class="item == namespace ? 'active' : ''"
+                        @click="getApolloConfig(item)">{{item}}</a>
+                </template>
+            </div>
+        </div>
+        <div class="col-md-9">
+            <p>
+                <button type="button" class="btn btn-primary" @click="showAddModal">增加</button>
+            </p>
+            <div class="table-responsive">
+<table class="table table-bordered table-condensed">
+                <thead>
+                    <tr>
+                        <th>配置key</th>
+                        <th>配置值</th>
+                        <th>修改</th>
+                    </tr>
+                <thead>
+                <tbody>
+                    <tr v-for="(item, i) in this.config">
+                        <td width='20%' >{{item.key}}</td>
+                        <td width='70%'>
+                            <p @click="showModal(item)">{{item.value.substring(0, 70)}}</p>
+                        </td>
+                        <td width='10%'>
+                            <button class="btn btn-link" @click="showModal(item)">修改</button>
+                            <button class="btn btn-link" @click="deleteData(item)">删除</button>
+                        </td>
+                    </tr>
+                </tbody>
+                </tbody>
+            </table>
+</div>
+        </div>
+    </div>
+
+    <!-- Modal -->
+    <div class="modal fade" id="myModal" tabindex="-1" role="dialog" aria-labelledby="myModalLabel">
+        <div class="modal-dialog" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
+                    <h4 class="modal-title" id="myModalLabel">修改配置值</h4>
+                </div>
+                <div class="modal-body">
+                    <textarea v-model="modalContent" class="form-control"></textarea>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-default" data-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" @click="submitChanges">确定</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="apolloAddModel" tabindex="-1" role="dialog" aria-labelledby="myModalLabel">
+        <div class="modal-dialog" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h4 class="modal-title">新增</h4>
+                </div>
+                <div class="modal-body">
+                    <p>
+                        <strong>Key: </strong> <input class="form-control" v-model="apolloKey" />
+                    </p>
+                    <p>
+                        <strong>Value: </strong> <textarea class="form-control" v-model="apolloValue"></textarea>
+                    </p>
+                    <p>
+                        <button class="btn btn-primary" @click="createApollo()">确认</button>
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+</template>
+<script>
+    var getDBData = async (database) => {
+        let result = await axios.get('/api/mysql/table/' + database)
+        if (result.data.code != 0) {
+            console.log(result.data.message)
+            return
+        }
+        let tables = result.data.data
+        let data = {}
+        for (let i = 0; i < tables.length; i++) {
+            let tmp = await axios.post('/api/mysql/query/' + database + '/' + tables[i], {
+                where : null,
+                page : 1,
+                page_size : 5000
+            })
+            if (tmp.data.code == 0 && tmp.data.data.length > 0) {
+                data[tables[i]] = tmp.data.data
+            }
+        }
+        delete data['SPRING_SESSION']
+        delete data['SPRING_SESSION_ATTRIBUTES']
+        return data
+    }
+    var importDBData = async (database, data) => {
+        bootboxLoading('正在导入' + database + '数据中....')
+        let tables = Object.keys(data)
+        for (let i = 0; i < tables.length; i++) {
+            let sql = 'delete from `' + tables[i] + '`'
+            let result = await axios.post('/api/mysql/exec_sql/' + database, {
+                sql: base64Encode(sql),
+            })
+            if (result.data.code != 0) {
+                console.log(result.data.message, sql)
+            }
+        }
+        for (let i = 0; i < tables.length; i++) {
+            let result = await axios.post('/api/mysql/batch_create/' + database + '/' + tables[i], data[tables[i]])
+            if (result.data.code != 0) {
+                console.log(result.data.message, tables[i])
+            }
+        }
+    }
+    var clearDatabase = async (database) => {
+        let result = await axios.get('/api/mysql/table/' + database)
+        if (result.data.code != 0) {
+            console.log(result.data.message)
+            return
+        }
+        let tables = result.data.data
+        let data = {}
+        for (let i = 0; i < tables.length; i++) {
+            let sql = 'delete from `' + tables[i] + '`'
+            let result = await axios.post('/api/mysql/exec_sql/' + database, {
+                sql: base64Encode(sql),
+            })
+            if (result.data.code != 0) {
+                console.log(result.data.message, sql)
+            }
+        }
+        return data
+    }
+    window.VueObject = {
+        data() {
+            let list = []
+            return {
+                dir: '/',
+                app_id: 'SampleApp',
+                app_ids: [
+                    "SampleApp",
+                ],
+                namespaces: [],
+                config: {},
+                table: '',
+                tableFields: [],
+                where: '',
+                tableData: [],
+                record: {},
+                sql: '',
+                json: '',
+                keyword : '',
+                dataCount: 0,
+                totalPage: 0,
+                loading: false,
+                createData: {},
+
+                newTables: {},
+                newFields: {},
+                alertSQLs: [],
+                oldData: "",
+                newData: "",
+                isReplaceSQLBtn: false,
+                modalContent: '',
+                currentItem: null,
+                apolloKey : '',
+                apolloValue : '',
+            }
+        },
+        template: '#template',
+        async mounted() {
+        this.namespaces = await this.getNamespaces()
+        },
+        methods: {
+            async changeAppId() {
+                this.namespaces = await this.getNamespaces()
+            },
+            async getNamespaces() {
+                let result = await axios.get('/api/apollo/namespace/list?app_id='+this.app_id)
+                return result.data.data.namespace_list
+            },
+
+            async getApolloConfig(t) {
+                console.log(t)
+                this.namespace = t
+                let result = await axios.get('/api/apollo/config?app_id='+this.app_id+'&namespace='+t)
+                this.config = result.data.data.config
+            },
+            showModal(item) {
+                this.modalContent = item.value;
+                this.currentItem = item;
+                $('#myModal').modal('show');
+            },
+            async updateApolloConfig(item) {
+                let result = await axios.post('/api/apollo/config/update', {
+                    app_id: this.app_id,
+                    namespace: this.namespace,
+                    key: item.key,
+                    value: item.value
+                })
+                if (result.data.code == 0) {
+                    this.getApolloConfig(this.namespace)
+                }
+            },
+            async submitChanges() {
+                this.currentItem.value = this.modalContent;
+                await this.updateApolloConfig(this.currentItem);
+                $('#myModal').modal('hide');
+            },
+            exportApolloData() {
+                bootbox.confirm('确认导出所有数据？', async (yesNo) => {
+                    if (!yesNo) {
+                        return
+                    }
+                    bootboxLoading('正在下载数据')
+                    let databases = ["ApolloPortalDB", "ApolloConfigDB"]
+                    for (let i = 0; i < databases.length; i++) {
+                        let tempList = await getDBData(databases[i])
+                        let text = JSON.stringify(tempList)
+                        let file = 'data_' +databases[i] + '.json'
+                        saveFile(text, file)
+                        await sleep(1000)
+                    }                   
+                    bootbox.hideAll()
+                    bootbox.alert('下载成功，请到浏览器下载目录下查看')
+                })
+            },
+            importApolloData() {
+                bootbox.confirm('确认导入apollo数据，apollo数据将被清空？', async (yesNo) => {
+                    if (!yesNo) {
+                        return
+                    }
+                    bootboxLoading('正在获取apolloConfig数据...., /mysql_data/data/ApolloConfigDB.json')
+                    let tmp = await axios.get('/mysql_data/data/ApolloConfigDB.json')
+                    let origin_json = {}
+                    if (tmp.status == 200) {
+                        origin_json = tmp.data
+                    }
+                    bootboxLoading('正在导入apolloConfig数据中....')
+                    await importDBData("ApolloConfigDB", origin_json)
+                    
+                    bootbox.hideAll()
+                    bootbox.alert('导入完成', () => {
+                        window.location.reload()
+                    })
+                })
+            },
+            clearDBData() {
+                bootbox.confirm('确认清空apollo数据？', async (yesNo) => {
+                    if (!yesNo) {
+                        return
+                    }
+                    bootboxLoading('正在清空apollo数据')
+                    let databases = ["ApolloPortalDB", "ApolloConfigDB"]
+                    for (let i = 0; i < databases.length; i++) {
+                        await clearDatabase(databases[i])
+                    }
+                    bootbox.hideAll()
+                    bootbox.alert('清空完成', () => {
+                        window.location.reload()
+                    })
+                })
+            },
+            showAddModal() {
+                $('#apolloAddModel').modal('show')
+            },
+            async createApollo() {
+                let data = {
+                    app_id: this.app_id,
+                    namespace: this.namespace,
+                    key: this.apolloKey,
+                    value: this.apolloValue
+                }
+                let result = await axios.post('/api/apollo/config/create', data)
+                if (result.data.code == 0) {
+                    this.getApolloConfig(this.namespace)
+                } else {
+                    bootbox.alert(result.data.message)
+                }
+                $('#apolloAddModel').modal('hide')
+            },
+
+            async deleteData(item) {
+                bootbox.confirm('确认删除？', async (yesNo) => {
+                    if (!yesNo) {
+                        return
+                    }
+                    let result = await axios.post('/api/apollo/config/delete', {
+                        app_id: this.app_id,
+                        namespace: this.namespace,
+                        id: item.id
+                    })
+                    if (result.data.code == 0) {
+                        this.getApolloConfig(this.namespace)
+                    } else {
+                        bootbox.alert(result.data.message)
+                    }
+                })
+            },
+            async saveStruct() {
+                 bootbox.confirm('确认导出所有表的结构？', async (yesNo) => {
+                    if (!yesNo) {
+                        return
+                    }
+                    bootboxLoading('正在下载数据...')
+                    let databases = ["ApolloPortalDB", "ApolloConfigDB"]
+                    for (let i = 0; i < databases.length; i++) {
+                        let result = await axios.get('/api/mysql/table/' + databases[i])
+                        let tempList = {}
+                        for (let j = 0; j < result.data.data.length; j++) {
+                            tempList[result.data.data[j]] = await this.getTableStruct(databases[i], result.data.data[j])
+                        }
+                        saveFile(JSON.stringify(tempList), 'struct_' +databases[i] + '.json')
+                        await sleep(1000)
+                    }
+                    bootbox.hideAll()
+                    bootbox.alert('下载成功，请到浏览器下载目录下查看')
+                 })
+            },
+            async getTableStruct(database, table) {
+                let retData = {}
+                let result1 = await axios.get('/api/mysql/show_create_table/' + database + '/' + table)
+                if (result1.data.code == 0) {
+                    retData["sql"] = result1.data.data.sql
+                }
+
+                let result2 = await axios.get('/api/mysql/desc/' + database + '/' + table)
+                if (result2.data.code == 0) {
+                    retData["desc"] = result2.data.data
+                }
+                if (table == "SPRING_SESSION") {
+                    retData["weight"] = 999
+                }
+                return retData
+            },
+        }
+    }
+</script>

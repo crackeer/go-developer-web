@@ -1,0 +1,159 @@
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: kube-backup-reader
+rules:
+- apiGroups:
+  - '*'
+  resources:
+  - '*'
+  verbs: ["get", "list"]
+---
+
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: kube-backup
+  namespace: default
+subjects:
+- kind: ServiceAccount
+  name: kube-backup
+  namespace: kube-system
+roleRef:
+  kind: ClusterRole
+  name: kube-backup-reader
+  apiGroup: rbac.authorization.k8s.io
+
+---
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kube-backup
+  namespace: kube-system
+
+---
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kube-backup-{{DATE}}
+  namespace: kube-system
+  labels:
+    app: kube-backup
+spec:
+  template:
+    metadata:
+      labels:
+        app: kube-backup
+      name: kube-backup
+    spec:
+      containers:
+      - image: quay.io/plange/kube-backup:1.12.0-1
+        imagePullPolicy: Never
+        name: backup
+        resources: {}
+        securityContext:
+          runAsUser: 0
+          runAsGroup: 0
+          privileged: true
+          fsGroup: 0  
+        command: ["/entrypoint.sh", "/data1/kube-backup/{{DATE}}"]
+        volumeMounts:
+          - name: entrypoint
+            mountPath: /entrypoint.sh
+            subPath: entrypoint
+            readOnly: true
+          - name: backup-path
+            mountPath: /data1/kube-backup/{{DATE}}
+      dnsPolicy: ClusterFirst
+      terminationGracePeriodSeconds: 30
+      serviceAccountName: kube-backup
+      volumes:
+      - name: backup-path
+        hostPath:
+          path: /data1/kube-backup/{{DATE}}
+          type: DirectoryOrCreate
+      - name: entrypoint
+        configMap:
+          name: kube-backup-config
+          defaultMode: 0755
+      restartPolicy: OnFailure
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kube-backup-config
+  namespace: kube-system
+data:
+  entrypoint: |
+    #!/bin/bash -e
+    if [ "$#" -ne 1 ]; then
+        echo "Usage: $0 <backup_dir>"
+        exit 1
+    fi
+    BACKUP_DIR=$1
+    if [ ! -d "$BACKUP_DIR" ]; then
+        mkdir -p "$BACKUP_DIR"
+    fi
+
+    if [ -z "$NAMESPACES" ]; then
+        NAMESPACES=$(kubectl get ns -o jsonpath={.items[*].metadata.name})
+    fi
+
+    RESOURCETYPES="${RESOURCETYPES:-"ingress deployment configmap svc rc ds networkpolicy statefulset cronjob pvc"}"
+    GLOBALRESOURCES="${GLOBALRESOURCES:-"namespace storageclass clusterrole clusterrolebinding customresourcedefinition"}"
+
+
+    # Start kubernetes state export
+    for resource in $GLOBALRESOURCES; do
+        echo "Exporting resource: ${resource}" >/dev/stderr
+        kubectl get -o=json "$resource" | jq --sort-keys \
+            'del(
+              .items[].metadata.annotations."kubectl.kubernetes.io/last-applied-configuration",
+              .items[].metadata.annotations."control-plane.alpha.kubernetes.io/leader",
+              .items[].metadata.uid,
+              .items[].metadata.selfLink,
+              .items[].metadata.resourceVersion,
+              .items[].metadata.creationTimestamp,
+              .items[].metadata.generation
+          )' | python -c 'import sys, yaml, json; yaml.safe_dump(json.load(sys.stdin), sys.stdout, default_flow_style=False)' >"$BACKUP_DIR/${resource}.yaml"
+        echo "exported resource: ${resource}"
+    done
+
+    for namespace in $NAMESPACES; do
+        [ -d "$BACKUP_DIR/${namespace}" ] || mkdir -p "$BACKUP_DIR/${namespace}"
+
+        for type in $RESOURCETYPES; do
+            echo "[${namespace}] Exporting resources: ${type}" >/dev/stderr
+
+            label_selector=""
+            if [[ "$type" == 'configmap' && -z "${INCLUDE_TILLER_CONFIGMAPS:-}" ]]; then
+                label_selector="-l OWNER!=TILLER"
+            fi
+
+            kubectl --namespace="${namespace}" get "$type" $label_selector -o custom-columns=SPACE:.metadata.namespace,KIND:..kind,NAME:.metadata.name --no-headers | while read -r a b name; do
+                [ -z "$name" ] && continue
+
+            # Service account tokens cannot be exported
+            if [[ "$type" == 'secret' && $(kubectl get -n "${namespace}" -o jsonpath="{.type}" secret "$name") == "kubernetes.io/service-account-token" ]]; then
+                continue
+            fi
+
+            kubectl --namespace="${namespace}" get -o=json "$type" "$name" | jq --sort-keys \
+            'del(
+                .metadata.annotations."control-plane.alpha.kubernetes.io/leader",
+                .metadata.annotations."kubectl.kubernetes.io/last-applied-configuration",
+                .metadata.creationTimestamp,
+                .metadata.generation,
+                .metadata.resourceVersion,
+                .metadata.selfLink,
+                .metadata.uid,
+                .spec.clusterIP,
+                .status
+            )' | python -c 'import sys, yaml, json; yaml.safe_dump(json.load(sys.stdin), sys.stdout, default_flow_style=False)' >"$BACKUP_DIR/${namespace}/${name}.${type}.yaml"
+            echo "exported resource: ${namespace}/${name}.${type}" >/dev/stderr
+            done
+        done
+    done

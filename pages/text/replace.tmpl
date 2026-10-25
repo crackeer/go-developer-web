@@ -1,0 +1,45 @@
+<template id="template">
+    <div class="row">
+        <div class="col-md-6">
+            <input type="text" class="form-control" placeholder="搜索文本" v-model="keyword1">
+        </div>
+        <div class="col-md-6">
+            <input type="text" class="form-control" placeholder="替换文本" v-model="keyword2">
+        </div>
+    </div>
+    <hr />
+    <div style="padding: 10px 7.5%; text-align: center;">
+        <button type="button" class="btn btn-primary" @click="convert">转换</button>
+    </div>
+    <div class="row">
+        <div class="col-md-6">
+            <div class="panel-heading">原始文本</div>
+            <textarea class="form-control" rows="30" v-model="content"></textarea>
+        </div>
+        <div class="col-md-6">
+            <div class="panel-heading">替换之后文本</div>
+            <textarea class="form-control" rows="30" v-model="output"></textarea>
+        </div>
+    </div>
+
+</template>
+<script>
+
+    window.VueObject = {
+        data() {
+            return {
+                keyword1: '',
+                keyword2: '',
+                content: '',
+                output: '',
+            }
+        },
+        template: '#template',
+        methods: {
+
+            async convert() {
+                this.output = this.content.replaceAll(this.keyword1, this.keyword2)
+            }
+        }
+    }
+</script>

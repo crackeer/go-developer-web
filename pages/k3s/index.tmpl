@@ -1,0 +1,2397 @@
+<template id="template">
+    <div class="well" style="margin-bottom: 10px;">
+        <div class="clearfix" style="margin: -4px 0 0 -8px;">
+            <button class="btn btn-xs btn-primary" style="margin-top: 4px; margin-left: 8px;" @click="gotoImageManager">镜像管理</button>
+            <button class="btn btn-xs btn-primary" style="margin-top: 4px; margin-left: 8px;"
+                @click="openApplyYamlModal">ApplyYaml</button>
+        </div>
+    </div>
+    <div class="panel panel-default" style="margin-bottom: 10px;">
+        <div class="panel-heading" style="padding: 6px 12px; cursor: pointer;"
+            @click="nodesCollapsed = !nodesCollapsed">
+            <strong>Nodes 节点列表</strong>
+            <span style="margin-left: 6px; font-weight: normal; color: #999;">共 {{nodeRows.length}} 个节点</span>
+            <span class="pull-right" style="font-size: 12px;">{{nodesCollapsed ? '▶ 展开' : '▼ 收起'}}</span>
+        </div>
+        <div v-show="!nodesCollapsed">
+            <div class="table-responsive" style="margin-bottom: 0;">
+                <table class="table table-bordered table-condensed table-hover" style="margin-bottom: 0;">
+                    <thead>
+                        <tr>
+                            <th style="width: 60px;">#</th>
+                            <th>name</th>
+                            <th>status</th>
+                            <th>roles</th>
+                            <th>version</th>
+                            <th>internal_ip</th>
+                            <th>pod_cidr</th>
+                            <th>create_time</th>
+                            <th style="width: 150px;">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr v-for="(row, i) in nodeRows" :key="row.name || i">
+                            <td>{{i + 1}}</td>
+                            <td>{{row.name || ''}}</td>
+                            <td>{{row.status || ''}}</td>
+                            <td>{{row.roles || ''}}</td>
+                            <td>{{row.version || ''}}</td>
+                            <td>{{row.internal_ip || ''}}</td>
+                            <td>{{row.pod_cidr || ''}}</td>
+                            <td>{{row.create_time || ''}}</td>
+                            <td>
+                                <button class="btn btn-xs btn-link" style="padding: 0 4px;"
+                                    @click="describeNode(row.name)">describe</button>
+                                <button class="btn btn-xs btn-link" style="padding: 0 4px;"
+                                    @click="openViewNodeLabelsModal(row)">查看Label</button>
+                                <button class="btn btn-xs btn-link" style="padding: 0 4px;"
+                                    @click="openNodeLabelModal(row.name)">打Label</button>
+                                <button class="btn btn-xs btn-link text-danger" style="padding: 0 4px;"
+                                    @click="openRemoveNodeLabelModal(row)">删除Label</button>
+                            </td>
+                        </tr>
+                        <tr v-if="!nodeRows || nodeRows.length < 1">
+                            <td colspan="9" style="text-align:center; color:#999;">
+                                {{nodeLoading ? '加载中...' : '暂无节点数据'}}
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="well" style="margin-bottom: 10px;">
+        <div class="form-group" v-if="namespaceList.length">
+            <label style="margin-right: 10px;">namespace：</label>
+            <label v-for="ns in namespaceList" :key="ns" style="margin-right: 10px; font-weight: normal;">
+                <input type="radio" v-model="currentNamespace" :value="ns" />
+                {{ns}}
+            </label>
+        </div>
+        <div class="form-group" style="margin-bottom: 0;">
+            <label style="margin-right: 10px;">resource：</label>
+            <label v-for="r in resourceList" :key="r.value" style="margin-right: 10px; font-weight: normal;">
+                <input type="radio" v-model="currentResource" :value="r.value" />
+                {{r.label}}
+            </label>
+        </div>
+        <div style="margin-top: 8px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap;">
+            <div class="input-group input-group-sm" style="width: 280px; margin-right: 12px;">
+                <input type="text" class="form-control" v-model="keyword" placeholder="输入关键词检索 name"
+                    @keyup.esc="keyword = ''" />
+                <span class="input-group-btn" v-if="keyword">
+                    <button class="btn btn-default" type="button" @click="keyword = ''">清空</button>
+                </span>
+            </div>
+            <div style="color: #555;">
+                当前：namespace=<strong>{{currentNamespace}}</strong>，resource=<strong>{{currentResource}}</strong>，
+                共 <strong>{{rows.length}}</strong> 条<span v-if="keywordActive">，匹配 <strong>{{filteredRows.length}}</strong> 条</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="table-responsive">
+        <table class="table table-bordered table-condensed table-hover">
+            <thead>
+                <tr>
+                    <th style="width: 60px;">#</th>
+                    <th>name</th>
+                    <th v-for="c in currentColumns" :key="c.key">{{c.title}}</th>
+                    <th style="width: 200px;">操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr v-for="(item, i) in filteredRows" :key="getMeta(item).uid || getMeta(item).name || i">
+                    <td>{{i + 1}}</td>
+                    <td>{{getMeta(item).name}}</td>
+                    <td v-for="c in currentColumns" :key="c.key">
+                        <span>{{renderCell(item, c.key)}}</span>
+                    </td>
+                    <td>
+                        <button class="btn btn-xs btn-link" style="padding: 0 4px;"
+                            @click="showDetail(item)">详情</button>
+                        <button class="btn btn-xs btn-link" style="padding: 0 4px;" v-if="isPodResource"
+                            @click="showPodLog(item)">日志</button>
+                        <button class="btn btn-xs btn-link" style="padding: 0 4px;" v-if="isPodResource"
+                            @click="downloadPodLog(item)">下载日志</button>
+                        <button class="btn btn-xs btn-link" style="padding: 0 4px;" v-if="isRolloutRestartSupported"
+                            @click="rolloutRestart(item)">Rollout</button>
+                        <button class="btn btn-xs btn-link" style="padding: 0 4px;" v-if="isScaleSupported"
+                            @click="scaleResource(item)">Scale</button>
+                        <button class="btn btn-xs btn-link" style="padding: 0 4px;" v-if="isResourceUpdateSupported"
+                            @click="openUpdateResourceModal(item)">更新资源</button>
+                        <button class="btn btn-xs btn-link" style="padding: 0 4px;" v-if="isScheduleSupported"
+                            @click="openScheduleModal(item)">调度</button>
+                        <button class="btn btn-xs btn-link" style="padding: 0 4px;" v-if="isYamlEditSupported"
+                            @click="openEditResourceModal(item)">编辑</button>
+                        <button class="btn btn-xs btn-link text-danger" style="padding: 0 4px;"
+                            @click="deleteResource(item)">删除</button>
+                    </td>
+                </tr>
+                <tr v-if="filteredRows.length < 1">
+                    <td :colspan="3 + currentColumns.length" style="text-align: center; color: #999;">
+                        {{keywordActive && rows.length > 0 ? '没有匹配的 name' : '暂无数据'}}
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="modal fade" id="k3sDetailModal" tabindex="-1" role="dialog" aria-labelledby="k3sDetailModalLabel">
+        <div class="modal-dialog modal-lg" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span
+                            aria-hidden="true">&times;</span></button>
+                    <h4 class="modal-title" id="k3sDetailModalLabel">{{detailTitle || '详情'}}</h4>
+                </div>
+                <div class="modal-body">
+                    <textarea id="k3sDetailEditor"></textarea>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-default" v-if="detailDownloadName"
+                        @click="downloadDetail">下载为 txt</button>
+                    <button type="button" class="btn btn-default" data-dismiss="modal">关闭</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="k3sPodLogModal" tabindex="-1" role="dialog" aria-labelledby="k3sPodLogModalLabel">
+        <div class="modal-dialog modal-lg" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span
+                            aria-hidden="true">&times;</span></button>
+                    <h4 class="modal-title" id="k3sPodLogModalLabel">{{podLogTitle || 'Pod 日志'}}</h4>
+                </div>
+                <div class="modal-body">
+                    <textarea class="form-control" readonly rows="100" v-model="podLogText"
+                        style="font-family: Menlo, Monaco, Consolas, 'Courier New', monospace; max-height: 85vh; width: 100%; white-space: pre; overflow: auto; resize: vertical;"></textarea>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-default" data-dismiss="modal">关闭</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="k3sNodeModal" tabindex="-1" role="dialog" aria-labelledby="k3sNodeModalLabel">
+        <div class="modal-dialog modal-lg" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span
+                            aria-hidden="true">&times;</span></button>
+                    <h4 class="modal-title" id="k3sNodeModalLabel">Nodes 节点列表</h4>
+                </div>
+                <div class="modal-body">
+                    <div class="table-responsive">
+                        <table class="table table-bordered table-condensed table-hover">
+                            <thead>
+                                <tr>
+                                    <th style="width: 60px;">#</th>
+                                    <th>name</th>
+                                    <th>status</th>
+                                    <th>roles</th>
+                                    <th>version</th>
+                                    <th>internal_ip</th>
+                                    <th>pod_cidr</th>
+                                    <th>create_time</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="(row, i) in nodeRows" :key="row.name || i">
+                                    <td>{{i + 1}}</td>
+                                    <td>{{row.name || ''}}</td>
+                                    <td>{{row.status || ''}}</td>
+                                    <td>{{row.roles || ''}}</td>
+                                    <td>{{row.version || ''}}</td>
+                                    <td>{{row.internal_ip || ''}}</td>
+                                    <td>{{row.pod_cidr || ''}}</td>
+                                    <td>{{row.create_time || ''}}</td>
+                                </tr>
+                                <tr v-if="!nodeRows || nodeRows.length < 1">
+                                    <td colspan="8" style="text-align:center; color:#999;">暂无节点数据</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-default" data-dismiss="modal">关闭</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="k3sApplyModal" tabindex="-1" role="dialog" aria-labelledby="k3sApplyModalLabel">
+        <div class="modal-dialog modal-lg" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span
+                            aria-hidden="true">&times;</span></button>
+                    <h4 class="modal-title" id="k3sApplyModalLabel">ApplyYaml</h4>
+                </div>
+                <div class="modal-body">
+                    <form class="form-horizontal">
+                        <div class="form-group">
+                            <label class="col-sm-2 control-label">文件</label>
+                            <div class="col-sm-10">
+                                <input type="file" class="form-control" accept=".yaml,.yml,text/yaml"
+                                    @change="onApplyFileChange" />
+                                <p class="help-block" v-if="applyFileName" style="margin-bottom: 0;">
+                                    当前文件：<strong>{{applyFileName}}</strong>
+                                </p>
+                            </div>
+                        </div>
+                        <div class="form-group" style="margin-bottom: 10px;">
+                            <label class="col-sm-2 control-label">YAML</label>
+                            <div class="col-sm-10">
+                                <textarea id="k3sApplyEditor" class="form-control" v-model="applyYamlText"
+                                    style="height: 50vh; font-family: Menlo, Monaco, Consolas, 'Courier New', monospace;"
+                                    placeholder="粘贴 YAML（支持多文档 --- 分隔），或选择文件自动填充"></textarea>
+                            </div>
+                        </div>
+
+                        <div class="form-group" v-if="applyResults && applyResults.length">
+                            <label class="col-sm-2 control-label">结果</label>
+                            <div class="col-sm-10">
+                                <div class="table-responsive">
+                                    <table class="table table-condensed table-bordered" style="margin-bottom: 0;">
+                                        <thead>
+                                            <tr>
+                                                <th style="width: 90px;">action</th>
+                                                <th style="width: 140px;">kind</th>
+                                                <th>name</th>
+                                                <th>error</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <tr v-for="(r, i) in applyResults" :key="i">
+                                                <td>
+                                                    <span v-if="r && r.action === 'error'"
+                                                        class="text-danger"><strong>{{r.action}}</strong></span>
+                                                    <span v-else><strong>{{(r && r.action) || ''}}</strong></span>
+                                                </td>
+                                                <td>{{(r && r.kind) || ''}}</td>
+                                                <td>
+                                                    <span v-if="r && r.namespace">{{r.namespace}}/</span>{{(r && r.name)
+                                                    || ''}}
+                                                </td>
+                                                <td>
+                                                    <span v-if="r && r.error" class="text-danger">{{r.error}}</span>
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-default" data-dismiss="modal" :disabled="applying">关闭</button>
+                    <button type="button" class="btn btn-primary" @click="submitApplyYaml"
+                        :disabled="applying || !(applyYamlText && applyYamlText.trim())">
+                        {{applying ? 'Applying...' : '确认 Apply'}}
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="k3sViewNodeLabelsModal" tabindex="-1" role="dialog" aria-labelledby="k3sViewNodeLabelsModalLabel">
+        <div class="modal-dialog modal-md" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span
+                            aria-hidden="true">&times;</span></button>
+                    <h4 class="modal-title" id="k3sViewNodeLabelsModalLabel">{{viewNodeLabelsName}} 的 Labels</h4>
+                </div>
+                <div class="modal-body">
+                    <div v-if="viewNodeLabels && Object.keys(viewNodeLabels).length > 0">
+                        <table class="table table-bordered table-condensed">
+                            <thead>
+                                <tr>
+                                    <th style="width: 40%;">Key</th>
+                                    <th>Value</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="(value, key) in viewNodeLabels" :key="key">
+                                    <td>{{key}}</td>
+                                    <td>{{value}}</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div v-else class="text-center text-muted">
+                        该 Node 暂无 Label
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-default" data-dismiss="modal">关闭</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="k3sNodeLabelModal" tabindex="-1" role="dialog" aria-labelledby="k3sNodeLabelModalLabel">
+        <div class="modal-dialog modal-md" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span
+                            aria-hidden="true">&times;</span></button>
+                    <h4 class="modal-title" id="k3sNodeLabelModalLabel">为 Node 添加 Label</h4>
+                </div>
+                <div class="modal-body">
+                    <div class="form-horizontal">
+                        <div class="form-group">
+                            <label class="col-sm-3 control-label">Node</label>
+                            <div class="col-sm-9">
+                                <input type="text" class="form-control" :value="currentNodeName" readonly />
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label class="col-sm-3 control-label">选择标签</label>
+                            <div class="col-sm-9">
+                                <div class="checkbox" v-for="(label, key) in presetLabels" :key="key">
+                                    <label>
+                                        <input type="checkbox" v-model="selectedLabels[key]" :value="label" />
+                                        {{key}}={{label}}
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label class="col-sm-3 control-label">自定义标签</label>
+                            <div class="col-sm-9">
+                                <input type="text" class="form-control" v-model="customLabelInput"
+                                    placeholder="格式: key=value" />
+                                <p class="help-block" style="margin-bottom: 0;">输入自定义标签，如: mylabel=test</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-default" data-dismiss="modal">关闭</button>
+                    <button type="button" class="btn btn-primary" @click="submitNodeLabel"
+                        :disabled="applyingLabel">
+                        {{applyingLabel ? '添加中...' : '确认添加'}}
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="k3sRemoveNodeLabelModal" tabindex="-1" role="dialog" aria-labelledby="k3sRemoveNodeLabelModalLabel">
+        <div class="modal-dialog modal-md" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span
+                            aria-hidden="true">&times;</span></button>
+                    <h4 class="modal-title" id="k3sRemoveNodeLabelModalLabel">删除 Node Label</h4>
+                </div>
+                <div class="modal-body">
+                    <div class="form-horizontal">
+                        <div class="form-group">
+                            <label class="col-sm-3 control-label">Node</label>
+                            <div class="col-sm-9">
+                                <input type="text" class="form-control" :value="removeNodeName" readonly />
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label class="col-sm-3 control-label">选择要删除的标签</label>
+                            <div class="col-sm-9">
+                                <div class="checkbox" v-for="(label, key) in removePresetLabels" :key="key">
+                                    <label>
+                                        <input type="checkbox" v-model="removeSelectedLabels[key]" :value="label" />
+                                        {{key}}={{label}}
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label class="col-sm-3 control-label">自定义标签键</label>
+                            <div class="col-sm-9">
+                                <input type="text" class="form-control" v-model="removeCustomLabelKey"
+                                    placeholder="输入要删除的标签键，如: mylabel" />
+                                <p class="help-block" style="margin-bottom: 0;">输入要删除的标签键名</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-default" data-dismiss="modal">关闭</button>
+                    <button type="button" class="btn btn-danger" @click="submitRemoveNodeLabel"
+                        :disabled="removingLabel">
+                        {{removingLabel ? '删除中...' : '确认删除'}}
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="k3sUpdateResourceModal" tabindex="-1" role="dialog" aria-labelledby="k3sUpdateResourceModalLabel">
+        <div class="modal-dialog modal-md" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span
+                            aria-hidden="true">&times;</span></button>
+                    <h4 class="modal-title" id="k3sUpdateResourceModalLabel">
+                        更新资源 {{updateResTarget.resource}} {{updateResTarget.namespace}}/{{updateResTarget.name}}
+                    </h4>
+                </div>
+                <div class="modal-body">
+                    <div class="form-horizontal">
+                        <div class="form-group">
+                            <label class="col-sm-3 control-label">容器</label>
+                            <div class="col-sm-9">
+                                <select class="form-control" v-model="updateResSelectedContainer"
+                                    v-if="updateResContainers.length">
+                                    <option v-for="c in updateResContainers" :key="c.name" :value="c.name">
+                                        {{c.name}}
+                                    </option>
+                                </select>
+                                <p class="form-control-static" v-else>无容器信息</p>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label class="col-sm-3 control-label">request cpu</label>
+                            <div class="col-sm-9">
+                                <input type="text" class="form-control" v-model="updateResForm.request_cpu"
+                                    placeholder="如 100m 或 1（留空=不改，- =删除）" />
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label class="col-sm-3 control-label">request memory</label>
+                            <div class="col-sm-9">
+                                <input type="text" class="form-control" v-model="updateResForm.request_memory"
+                                    placeholder="如 256Mi 或 1Gi（留空=不改，- =删除）" />
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label class="col-sm-3 control-label">limit cpu</label>
+                            <div class="col-sm-9">
+                                <input type="text" class="form-control" v-model="updateResForm.limit_cpu"
+                                    placeholder="如 500m 或 2（留空=不改，- =删除）" />
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label class="col-sm-3 control-label">limit memory</label>
+                            <div class="col-sm-9">
+                                <input type="text" class="form-control" v-model="updateResForm.limit_memory"
+                                    placeholder="如 512Mi 或 2Gi（留空=不改，- =删除）" />
+                            </div>
+                        </div>
+                        <p class="help-block" style="margin-left: 15px;">
+                            填写标准 K8s 资源单位：CPU 用 m（毫核）或整数核；内存用 Mi/Gi 等。更新后将触发滚动更新。
+                        </p>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-default" data-dismiss="modal"
+                        :disabled="updatingResource">关闭</button>
+                    <button type="button" class="btn btn-primary" @click="submitUpdateResource"
+                        :disabled="updatingResource">
+                        {{updatingResource ? '更新中...' : '确认更新'}}
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="k3sScheduleModal" tabindex="-1" role="dialog" aria-labelledby="k3sScheduleModalLabel">
+        <div class="modal-dialog modal-lg" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span
+                            aria-hidden="true">&times;</span></button>
+                    <h4 class="modal-title" id="k3sScheduleModalLabel">
+                        调度 {{scheduleTarget.resource}} {{scheduleTarget.namespace}}/{{scheduleTarget.name}}
+                    </h4>
+                </div>
+                <div class="modal-body">
+                    <div class="form-horizontal">
+                        <div class="form-group">
+                            <label class="col-sm-2 control-label">nodeSelector</label>
+                            <div class="col-sm-10">
+                                <div v-if="scheduleSelectorKeys.length" style="padding-top: 7px;">
+                                    <span v-for="(v, k) in scheduleSelector" :key="k" class="label label-primary"
+                                        style="display: inline-block; margin: 0 6px 6px 0; padding: 5px 8px; font-size: 12px;">
+                                        {{k}}={{v}}
+                                        <a href="javascript:;" style="color: #fff; margin-left: 6px;"
+                                            @click="removeScheduleKey(k)">&times;</a>
+                                    </span>
+                                </div>
+                                <p class="form-control-static text-muted" v-else>未设置（可调度到任意节点）</p>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label class="col-sm-2 control-label">匹配节点</label>
+                            <div class="col-sm-10">
+                                <p class="form-control-static">
+                                    <strong :class="scheduleMatchedNodes.length ? '' : 'text-danger'">{{scheduleMatchedNodes.length}}</strong>
+                                    / {{nodeRows.length}}
+                                    <span v-if="scheduleMatchedNodes.length">：{{scheduleMatchedNames}}</span>
+                                    <span v-else-if="nodeRows.length" class="text-danger">
+                                        没有节点满足当前 nodeSelector，Pod 将一直 Pending
+                                    </span>
+                                    <span v-else class="text-muted">暂无节点数据</span>
+                                </p>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label class="col-sm-2 control-label">节点 Label</label>
+                            <div class="col-sm-10">
+                                <input type="text" class="form-control input-sm" v-model="scheduleFilter"
+                                    placeholder="过滤 label，如 node-role / framework" style="margin-bottom: 6px;" />
+                                <div style="max-height: 220px; overflow: auto; border: 1px solid #ddd; padding: 4px 10px;">
+                                    <div class="checkbox" v-for="o in scheduleLabelOptions" :key="o.key + '=' + o.value"
+                                        style="margin: 2px 0;">
+                                        <label>
+                                            <input type="checkbox" :checked="isScheduleLabelSelected(o.key, o.value)"
+                                                @change="toggleScheduleLabel(o.key, o.value)" />
+                                            {{o.key}}={{o.value}}
+                                            <span class="text-muted">（{{o.count}} 个节点）</span>
+                                        </label>
+                                    </div>
+                                    <div v-if="!scheduleLabelOptions.length" class="text-muted">暂无可选 Label</div>
+                                </div>
+                                <p class="help-block" style="margin-bottom: 0;">同一个 key 只能有一个值，选择同 key 的其它值会覆盖原值。</p>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label class="col-sm-2 control-label">自定义</label>
+                            <div class="col-sm-10">
+                                <div class="input-group">
+                                    <input type="text" class="form-control" v-model="scheduleCustomInput"
+                                        placeholder="格式: key=value" @keyup.enter="addScheduleCustom" />
+                                    <span class="input-group-btn">
+                                        <button class="btn btn-default" type="button"
+                                            @click="addScheduleCustom">添加</button>
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                        <p class="help-block" style="margin-left: 15px;">
+                            保存后会修改 Pod 模板的 nodeSelector，并触发滚动更新；清空全部条件表示不限制调度节点。
+                        </p>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-default" data-dismiss="modal"
+                        :disabled="scheduling">关闭</button>
+                    <button type="button" class="btn btn-primary" @click="submitSchedule" :disabled="scheduling">
+                        {{scheduling ? '保存中...' : '保存调度'}}
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="k3sEditResourceModal" tabindex="-1" role="dialog"
+        aria-labelledby="k3sEditResourceModalLabel">
+        <div class="modal-dialog modal-lg" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span
+                            aria-hidden="true">&times;</span></button>
+                    <h4 class="modal-title" id="k3sEditResourceModalLabel">编辑 {{cmEditTarget.resource || '资源'}}
+                        <small v-if="cmEditTarget.name">{{cmEditTarget.namespace}}/{{cmEditTarget.name}}</small>
+                    </h4>
+                </div>
+                <div class="modal-body">
+                    <div class="panel panel-default" style="margin-bottom: 10px;">
+                        <div class="panel-heading" style="padding: 6px 12px;">
+                            <strong>关键词替换</strong>
+                            <span style="margin-left: 6px; font-weight: normal; color: #999;">
+                                切换到其它资源时会自动套用下列规则（旧关键词 → 新关键词）
+                            </span>
+                        </div>
+                        <div class="panel-body" style="padding: 8px 12px;">
+                            <div v-for="(rule, i) in cmReplaceRules" :key="i"
+                                style="display: flex; align-items: center; margin-bottom: 6px;">
+                                <input type="text" class="form-control input-sm" style="flex: 1; margin-right: 6px;"
+                                    v-model="rule.old" placeholder="旧关键词" />
+                                <span style="margin-right: 6px; color: #999;">→</span>
+                                <input type="text" class="form-control input-sm" style="flex: 1; margin-right: 6px;"
+                                    v-model="rule.new" placeholder="新关键词" />
+                                <button class="btn btn-xs btn-danger" @click="removeReplaceRule(i)">删除</button>
+                            </div>
+                            <div v-if="!cmReplaceRules.length" style="color: #999; margin-bottom: 6px;">
+                                暂无替换规则
+                            </div>
+                            <div style="margin-top: 4px;">
+                                <button class="btn btn-xs btn-default" @click="addReplaceRule">添加规则</button>
+                                <button class="btn btn-xs btn-primary" @click="applyAllReplaceRules"
+                                    :disabled="!cmReplaceRules.length">应用全部替换</button>
+                                <button class="btn btn-xs btn-link" @click="reloadOriginalResource">恢复原始内容</button>
+                            </div>
+                        </div>
+                    </div>
+                    <label style="font-weight: normal; color: #555;">{{cmEditTarget.resource || '资源'}} YAML</label>
+                    <textarea id="k3sResourceEditor"></textarea>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-default" data-dismiss="modal"
+                        :disabled="cmSaving">关闭</button>
+                    <button type="button" class="btn btn-primary" @click="submitEditResource" :disabled="cmSaving">
+                        {{cmSaving ? '保存中...' : '保存'}}
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</template>
+
+<link type="text/css" rel="stylesheet" href="/assets/css/codemirror/codemirror.min.css" />
+<link type="text/css" rel="stylesheet" href="/assets/css/codemirror/eclipse.min.css" />
+<script src="/assets/js/codemirror/codemirror.min.js"></script>
+<script src="/assets/js/codemirror/yaml.min.js"></script>
+<script src="/assets/js/codemirror/active-line.min.js"></script>
+
+<script>
+    window.VueObject = {
+        data() {
+            return {
+                namespaceList: [],
+                currentNamespace: '',
+                resourceList: [
+                    { label: 'deployment', value: 'deployment' },
+                    { label: 'service(svc)', value: 'svc' },
+                    { label: 'pod', value: 'pod' },
+                    { label: 'cronjob', value: 'cronjob' },
+                    { label: 'configmap', value: 'configmap' },
+                    { label: 'ingressroute', value: 'ingressroute' },
+                    { label: 'ingressroutetcp', value: 'ingressroutetcp' },
+                    { label: 'daemonset', value: 'daemonset' },
+                    { label: 'statefulset', value: 'statefulset' },
+                    { label: 'sa', value: 'sa' },
+                ],
+                currentResource: 'deployment',
+                rows: [],
+                keyword: '',
+                detailTitle: '',
+                detailYaml: '',
+                detailDownloadName: '',
+                podLogTitle: '',
+                podLogText: '',
+                applyYamlText: '',
+                applyFileName: '',
+                applyResults: [],
+                applying: false,
+                nodeRows: [],
+                nodeLoading: false,
+                nodesCollapsed: false,
+                backingKube: false,
+                currentNodeName: '',
+                presetLabels: {
+                    'node-role.rsprivate.com/mysql': 'true',
+                    'node-role.rsprivate.com/redis': 'true',
+                    'node-role.rsprivate.com/interface': 'true',
+                    'framework': 'worker',
+                },
+                selectedLabels: {},
+                customLabelInput: '',
+                applyingLabel: false,
+                viewNodeLabelsName: '',
+                viewNodeLabels: {},
+                removeNodeName: '',
+                removePresetLabels: {
+                    'node-role.rsprivate.com/mysql': 'true',
+                    'node-role.rsprivate.com/redis': 'true',
+                    'node-role.rsprivate.com/interface': 'true',
+                    'framework': 'worker',
+                },
+                removeSelectedLabels: {},
+                removeCustomLabelKey: '',
+                removingLabel: false,
+                updateResTarget: { resource: '', name: '', namespace: '' },
+                updateResContainers: [],
+                updateResSelectedContainer: '',
+                updateResForm: {
+                    request_cpu: '',
+                    request_memory: '',
+                    limit_cpu: '',
+                    limit_memory: '',
+                },
+                updatingResource: false,
+                scheduleTarget: { resource: '', name: '', namespace: '' },
+                scheduleOriginal: {},
+                scheduleSelector: {},
+                scheduleFilter: '',
+                scheduleCustomInput: '',
+                scheduling: false,
+                refreshTimer: null,
+                refreshIntervalMs: 3000,
+                fetchingList: false,
+                cmEditTarget: { resource: '', name: '', namespace: '' },
+                cmOriginalYaml: '',
+                cmReplaceRules: [],
+                cmEditor: null,
+                cmSaving: false,
+                cmApplyEditor: null,
+                cmDetailEditor: null,
+            }
+        },
+        template: '#template',
+        computed: {
+            isRolloutRestartSupported() {
+                const r = (this.currentResource || '').toLowerCase()
+                return (
+                    r === 'deployment' || r === 'deploy' || r === 'deployments' ||
+                    r === 'daemonset' || r === 'ds' || r === 'daemonsets' ||
+                    r === 'statefulset' || r === 'sts' || r === 'statefulsets'
+                )
+            },
+            isPodResource() {
+                const r = (this.currentResource || '').toLowerCase()
+                return r === 'pod' || r === 'pods'
+            },
+            isScaleSupported() {
+                const r = (this.currentResource || '').toLowerCase()
+                return (
+                    r === 'deployment' || r === 'deploy' || r === 'deployments' ||
+                    r === 'statefulset' || r === 'sts' || r === 'statefulsets'
+                )
+            },
+            isResourceUpdateSupported() {
+                const r = (this.currentResource || '').toLowerCase()
+                return (
+                    r === 'deployment' || r === 'deploy' || r === 'deployments' ||
+                    r === 'statefulset' || r === 'sts' || r === 'statefulsets'
+                )
+            },
+            isScheduleSupported() {
+                const r = (this.currentResource || '').toLowerCase()
+                return r === 'deployment' || r === 'deploy' || r === 'deployments'
+            },
+            isYamlEditSupported() {
+                const r = (this.currentResource || '').toLowerCase()
+                return (
+                    r === 'configmap' || r === 'configmaps' || r === 'cm' ||
+                    r === 'deployment' || r === 'deploy' || r === 'deployments' ||
+                    r === 'service' || r === 'svc' || r === 'services' ||
+                    r === 'cronjob' || r === 'cronjobs' || r === 'cj' ||
+                    r === 'ingressroute' || r === 'ingressroutes' || r === 'ir' ||
+                    r === 'ingressroutetcp' || r === 'ingressroutetcps' || r === 'irtcp'
+                )
+            },
+            keywordActive() {
+                return (this.keyword || '').trim() !== ''
+            },
+            // 按 name 做不区分大小写的包含匹配；关键词为空时展示全部
+            filteredRows() {
+                const rows = this.rows || []
+                const kw = (this.keyword || '').trim().toLowerCase()
+                if (!kw) {
+                    return rows
+                }
+                return rows.filter((item) => this.getMeta(item).name.toLowerCase().indexOf(kw) >= 0)
+            },
+            scheduleSelectorKeys() {
+                return Object.keys(this.scheduleSelector || {})
+            },
+            // 汇总所有节点上出现过的 label（key=value），并统计各自覆盖的节点数
+            scheduleLabelOptions() {
+                const map = {}
+                const nodes = this.nodeRows || []
+                for (let i = 0; i < nodes.length; i++) {
+                    const labels = (nodes[i] && nodes[i].labels) || {}
+                    Object.keys(labels).forEach((k) => {
+                        const v = labels[k] == null ? '' : String(labels[k])
+                        const id = k + '=' + v
+                        if (!map[id]) {
+                            map[id] = { key: k, value: v, count: 0 }
+                        }
+                        map[id].count++
+                    })
+                }
+                let list = Object.keys(map).map((id) => map[id])
+                const f = (this.scheduleFilter || '').trim().toLowerCase()
+                if (f) {
+                    list = list.filter((o) => (o.key + '=' + o.value).toLowerCase().indexOf(f) >= 0)
+                }
+                list.sort((a, b) => {
+                    if (a.key === b.key) return a.value.localeCompare(b.value)
+                    return a.key.localeCompare(b.key)
+                })
+                return list
+            },
+            // 满足当前所选 nodeSelector 的节点（nodeSelector 为空则全部节点）
+            scheduleMatchedNodes() {
+                const sel = this.scheduleSelector || {}
+                const keys = Object.keys(sel)
+                const nodes = this.nodeRows || []
+                return nodes.filter((n) => {
+                    const labels = (n && n.labels) || {}
+                    return keys.every((k) => Object.prototype.hasOwnProperty.call(labels, k) && String(labels[k]) === sel[k])
+                })
+            },
+            scheduleMatchedNames() {
+                return this.scheduleMatchedNodes.map((n) => n.name).join(', ')
+            },
+            currentColumns() {
+                const r = (this.currentResource || '').toLowerCase()
+                if (r === 'deployment' || r === 'deploy' || r === 'deployments') {
+                    return [
+                        { title: 'ready', key: 'deploy_ready' },
+                        { title: 'available', key: 'deploy_available' },
+                        { title: 'request_resource', key: 'deploy_requestResource' },
+                        { title: 'limit_resource', key: 'deploy_limitResource' },
+                        { title: 'age', key: 'age' },
+                    ]
+                }
+                if (r === 'svc' || r === 'service' || r === 'services') {
+                    return [
+                        { title: 'type', key: 'svc_type' },
+                        { title: 'cluster_ip', key: 'svc_clusterIP' },
+                        { title: 'ports', key: 'svc_ports' },
+                        { title: 'age', key: 'age' },
+                    ]
+                }
+                if (r === 'pod' || r === 'pods') {
+                    return [
+                        { title: 'ready', key: 'pod_ready' },
+                        { title: 'status', key: 'pod_status' },
+                        { title: 'restarts', key: 'pod_restarts' },
+                        { title: 'node', key: 'pod_node' },
+                        { title: 'node_ip', key: 'pod_node_ip' },
+                        { title: 'age', key: 'age' },
+                    ]
+                }
+                if (r === 'cronjob' || r === 'cronjobs') {
+                    return [
+                        { title: 'schedule', key: 'cj_schedule' },
+                        { title: 'suspend', key: 'cj_suspend' },
+                        { title: 'last_schedule', key: 'cj_lastSchedule' },
+                        { title: 'active', key: 'cj_active' },
+                        { title: 'age', key: 'age' },
+                    ]
+                }
+                if (r === 'configmap' || r === 'configmaps' || r === 'cm') {
+                    return [
+                        { title: 'data_count', key: 'cm_dataCount' },
+                        { title: 'immutable', key: 'cm_immutable' },
+                        { title: 'age', key: 'age' },
+                    ]
+                }
+                if (r === 'ingressroute' || r === 'ingressroutes' || r === 'ir' ||
+                    r === 'ingressroutetcp' || r === 'ingressroutetcps' || r === 'irtcp') {
+                    return [
+                        { title: 'entry_points', key: 'ir_entryPoints' },
+                        { title: 'routes', key: 'ir_routes' },
+                        { title: 'tls', key: 'ir_tls' },
+                        { title: 'age', key: 'age' },
+                    ]
+                }
+                if (r === 'daemonset' || r === 'daemonsets' || r === 'ds') {
+                    return [
+                        { title: 'desired', key: 'ds_desired' },
+                        { title: 'current', key: 'ds_current' },
+                        { title: 'ready', key: 'ds_ready' },
+                        { title: 'up_to_date', key: 'ds_upToDate' },
+                        { title: 'age', key: 'age' },
+                    ]
+                }
+                if (r === 'statefulset' || r === 'statefulsets' || r === 'sts') {
+                    return [
+                        { title: 'ready', key: 'sts_ready' },
+                        { title: 'current', key: 'sts_current' },
+                        { title: 'update_revision', key: 'sts_updateRevision' },
+                        { title: 'age', key: 'age' },
+                    ]
+                }
+                if (r === 'sa' || r === 'serviceaccount' || r === 'serviceaccounts') {
+                    return [
+                        { title: 'secrets', key: 'sa_secrets' },
+                        { title: 'automount', key: 'sa_automount' },
+                        { title: 'age', key: 'age' },
+                    ]
+                }
+                return [{ title: 'age', key: 'age' }]
+            }
+        },
+        watch: {
+            currentNamespace() {
+                this.syncQueryToUrl()
+                this.fetchList()
+            },
+            currentResource() {
+                this.syncQueryToUrl()
+                this.fetchList()
+            },
+            updateResSelectedContainer() {
+                this.fillResourceFormFromContainer()
+            },
+        },
+        async mounted() {
+            this.initFromQuery()
+            this.fetchNodes()
+            await this.fetchNamespaces()
+            // fetchNamespaces 内部会完成 namespace 默认选择（优先 business / 回退第一个）
+            // 如果 URL 指定了 namespace 但不在列表中，也回退到默认
+            if (this.currentNamespace && this.namespaceList.length > 0 && !this.namespaceList.includes(this.currentNamespace)) {
+                this.currentNamespace = ''
+                await this.fetchNamespaces()
+            }
+            this.syncQueryToUrl()
+            await this.fetchList()
+
+            // 定时刷新：静默刷新，不展示 loading 覆层
+            try {
+                if (this.refreshTimer) {
+                    clearInterval(this.refreshTimer)
+                }
+                this.refreshTimer = setInterval(() => {
+                    this.fetchList(true)
+                }, this.refreshIntervalMs)
+            } catch (e) {
+                // ignore
+            }
+        },
+        beforeDestroy() {
+            try {
+                if (this.refreshTimer) {
+                    clearInterval(this.refreshTimer)
+                    this.refreshTimer = null
+                }
+            } catch (e) {
+                // ignore
+            }
+        },
+        methods: {
+            async fetchNodes() {
+                if (this.nodeLoading) {
+                    return
+                }
+                try {
+                    this.nodeLoading = true
+                    const result = await axios.get('/api/k3s/node/list')
+                    if (!result.data || result.data.code !== 0) {
+                        return
+                    }
+                    this.nodeRows = result.data.data || []
+                } catch (e) {
+                    // ignore
+                } finally {
+                    this.nodeLoading = false
+                }
+            },
+            async showNodesModal() {
+                if (this.nodeLoading) {
+                    return
+                }
+                try {
+                    this.nodeLoading = true
+                    bootboxLoading('加载 Nodes 中...')
+                    const result = await axios.get('/api/k3s/node/list')
+                    bootbox.hideAll()
+                    if (!result.data || result.data.code !== 0) {
+                        bootbox.alert('获取 Nodes 失败：' + ((result.data && result.data.message) || '未知错误'))
+                        return
+                    }
+                    this.nodeRows = result.data.data || []
+                    this.nodesCollapsed = false
+                } catch (e) {
+                    bootbox.hideAll()
+                    bootbox.alert('获取 Nodes 失败：' + (e && e.message ? e.message : e))
+                } finally {
+                    this.nodeLoading = false
+                }
+            },
+            async describeNode(name) {
+                const nodeName = (name || '').trim()
+                if (!nodeName) {
+                    bootbox.alert('缺少 node name，无法查询详情')
+                    return
+                }
+                try {
+                    bootboxLoading('查询 Node 详情中...')
+                    const url = '/api/k3s/describe/node?name=' + encodeURIComponent(nodeName)
+                    const result = await axios.get(url)
+                    bootbox.hideAll()
+                    if (!result.data || result.data.code !== 0) {
+                        bootbox.alert('查询 Node 详情失败：' + ((result.data && result.data.message) || '未知错误'))
+                        return
+                    }
+                    this.detailTitle = `node ${nodeName}`
+                    this.detailYaml = (result.data.data && result.data.data.output) || ''
+                    const safeName = String(nodeName || '').replace(/[^a-zA-Z0-9_.-]+/g, '_')
+                    this.detailDownloadName = `node-describe_${safeName}.txt`
+                    this.openDetailModal('text/plain')
+                } catch (e) {
+                    bootbox.hideAll()
+                    bootbox.alert('查询 Node 详情失败：' + (e && e.message ? e.message : e))
+                }
+            },
+            downloadDetail() {
+                const content = this.detailYaml != null ? String(this.detailYaml) : ''
+                const name = this.detailDownloadName || 'detail.txt'
+                saveFile(content, name)
+            },
+            ensureDetailEditor(mode) {
+                if (typeof CodeMirror === 'undefined') {
+                    return
+                }
+                if (!this.cmDetailEditor) {
+                    const el = document.getElementById('k3sDetailEditor')
+                    if (!el) {
+                        return
+                    }
+                    this.cmDetailEditor = CodeMirror.fromTextArea(el, {
+                        mode: mode || 'yaml',
+                        theme: 'eclipse',
+                        lineNumbers: true,
+                        lineWrapping: false,
+                        indentUnit: 2,
+                        tabSize: 2,
+                        readOnly: true,
+                        styleActiveLine: true,
+                    })
+                    this.cmDetailEditor.setSize('100%', '70vh')
+                } else {
+                    // node describe 是纯文本，资源详情是 YAML，复用同一编辑器时切换高亮模式
+                    this.cmDetailEditor.setOption('mode', mode || 'yaml')
+                }
+            },
+            // 统一打开详情弹框：等显示动画结束、容器拿到真实尺寸后再初始化/刷新只读编辑器，
+            // 否则首次打开会按隐藏容器测量尺寸，出现大片空白。
+            openDetailModal(mode) {
+                const $modal = $('#k3sDetailModal')
+                $modal.off('shown.bs.modal.k3sdetail').one('shown.bs.modal.k3sdetail', () => {
+                    const created = !this.cmDetailEditor
+                    this.ensureDetailEditor(mode)
+                    if (this.cmDetailEditor) {
+                        this.cmDetailEditor.setValue(this.detailYaml || '')
+                        const refreshEditor = () => {
+                            if (this.cmDetailEditor) {
+                                this.cmDetailEditor.refresh()
+                            }
+                        }
+                        // 首次创建时 DOM 尚未完成布局，延迟到下一帧再刷新，避免顶部空白。
+                        if (created) {
+                            requestAnimationFrame(() => requestAnimationFrame(refreshEditor))
+                        } else {
+                            refreshEditor()
+                        }
+                    }
+                })
+                $modal.modal('show')
+            },
+            openApplyYamlModal() {
+                this.applyResults = []
+                this.applyFileName = ''
+                this.applying = false
+                this.applyYamlText = ''
+                const $modal = $('#k3sApplyModal')
+                // 等模态框显示动画结束、容器拿到真实尺寸后再初始化 CodeMirror，
+                // 否则行高/高度会按隐藏容器测量，出现大片空白。
+                $modal.off('shown.bs.modal.k3sapply').one('shown.bs.modal.k3sapply', () => {
+                    const created = !this.cmApplyEditor
+                    this.ensureApplyEditor()
+                    if (this.cmApplyEditor) {
+                        this.cmApplyEditor.setValue(this.applyYamlText || '')
+                        // 首次创建时 DOM 尚未完成布局，延迟到下一帧再刷新，避免顶部空白。
+                        if (created) {
+                            requestAnimationFrame(() => requestAnimationFrame(() => {
+                                if (this.cmApplyEditor) {
+                                    this.cmApplyEditor.refresh()
+                                }
+                            }))
+                        } else {
+                            this.cmApplyEditor.refresh()
+                        }
+                    }
+                })
+                $modal.modal('show')
+            },
+            ensureApplyEditor() {
+                if (this.cmApplyEditor) {
+                    return
+                }
+                if (typeof CodeMirror === 'undefined') {
+                    return
+                }
+                const el = document.getElementById('k3sApplyEditor')
+                if (!el) {
+                    return
+                }
+                this.cmApplyEditor = CodeMirror.fromTextArea(el, {
+                    mode: 'yaml',
+                    theme: 'eclipse',
+                    lineNumbers: true,
+                    lineWrapping: false,
+                    indentUnit: 2,
+                    tabSize: 2,
+                    styleActiveLine: true,
+                })
+                this.cmApplyEditor.setSize('100%', '50vh')
+                // 编辑器内容实时同步回 applyYamlText，保证“确认 Apply”按钮的禁用状态生效
+                this.cmApplyEditor.on('change', (cm) => {
+                    this.applyYamlText = cm.getValue()
+                })
+            },
+            // 一键下载 business 命名空间下 PHP + Golang 服务所有 Pod 的日志（zip）
+            // 确认后依次 rollout restart 同一 namespace 下的一组 deployment，并汇总每个的成败
+            restartDeployments(namespace, groupLabel, names) {
+                const tasks = names.map((name) => ({ name: name, resource: 'deployment', namespace: namespace }))
+                bootbox.confirm('确认重启 ' + namespace + ' 命名空间下的 ' + groupLabel + ' 服务（共 ' + tasks.length + ' 个）？', async (yes) => {
+                    if (!yes) {
+                        return
+                    }
+                    const results = []
+                    try {
+                        bootboxLoading('重启中...')
+                        for (let i = 0; i < tasks.length; i++) {
+                            const t = tasks[i]
+                            const label = `${t.namespace} ${t.resource}/${t.name}`
+                            try {
+                                const url = '/api/k3s/rollout/restart/' + encodeURIComponent(t.resource)
+                                const resp = await axios.post(url, null, {
+                                    params: {
+                                        name: t.name,
+                                        namespace: t.namespace,
+                                    }
+                                })
+                                if (!resp.data || resp.data.code !== 0) {
+                                    results.push({
+                                        ok: false,
+                                        label,
+                                        message: (resp.data && resp.data.message) ? resp.data.message : '未知错误',
+                                    })
+                                    continue
+                                }
+                                results.push({
+                                    ok: true,
+                                    label,
+                                })
+                            } catch (e) {
+                                results.push({
+                                    ok: false,
+                                    label,
+                                    message: e && e.message ? e.message : String(e),
+                                })
+                            }
+                        }
+                    } finally {
+                        bootbox.hideAll()
+                    }
+
+                    try {
+                        const lines = []
+                        for (let i = 0; i < results.length; i++) {
+                            const r = results[i]
+                            if (r.ok) {
+                                lines.push(`✅ ${r.label}`)
+                            } else {
+                                lines.push(`❌ ${r.label} | ${r.message || ''}`)
+                            }
+                        }
+                        bootbox.alert(lines.join('<br>') || '已执行')
+                    } catch (e) {
+                        bootbox.alert('已执行')
+                    }
+                })
+            },
+            openViewNodeLabelsModal(node) {
+                this.viewNodeLabelsName = node.name || ''
+                this.viewNodeLabels = node.labels || {}
+                $('#k3sViewNodeLabelsModal').modal('show')
+            },
+            openNodeLabelModal(nodeName) {
+                this.currentNodeName = nodeName || ''
+                this.selectedLabels = {}
+                this.customLabelInput = ''
+                this.applyingLabel = false
+                $('#k3sNodeLabelModal').modal('show')
+            },
+            async submitNodeLabel() {
+                const nodeName = this.currentNodeName || ''
+                if (!nodeName) {
+                    bootbox.alert('请选择 Node')
+                    return
+                }
+
+                const labels = {}
+                for (const key in this.selectedLabels) {
+                    if (this.selectedLabels[key]) {
+                        labels[key] = this.presetLabels[key] || 'true'
+                    }
+                }
+
+                if (this.customLabelInput) {
+                    const input = this.customLabelInput.trim()
+                    const parts = input.split('=')
+                    if (parts.length === 2) {
+                        const key = parts[0].trim()
+                        const value = parts[1].trim()
+                        if (key) {
+                            labels[key] = value
+                        }
+                    } else {
+                        bootbox.alert('自定义标签格式错误，请使用 key=value 格式')
+                        return
+                    }
+                }
+
+                if (Object.keys(labels).length === 0) {
+                    bootbox.alert('请选择或输入至少一个标签')
+                    return
+                }
+
+                if (this.applyingLabel) {
+                    return
+                }
+
+                try {
+                    this.applyingLabel = true
+                    bootboxLoading('添加 Label 中...')
+                    const url = '/api/k3s/node/label/add?name=' + encodeURIComponent(nodeName)
+                    const result = await axios.post(url, { labels: labels })
+                    bootbox.hideAll()
+                    this.applyingLabel = false
+                    if (!result.data || result.data.code !== 0) {
+                        bootbox.alert('添加 Label 失败：' + ((result.data && result.data.message) || '未知错误'))
+                        return
+                    }
+                    $('#k3sNodeLabelModal').modal('hide')
+                    bootbox.alert('Label 添加成功', async () => {
+                        await this.fetchNodes()
+                    })
+                } catch (e) {
+                    bootbox.hideAll()
+                    this.applyingLabel = false
+                    bootbox.alert('添加 Label 失败：' + (e && e.message ? e.message : e))
+                }
+            },
+            openRemoveNodeLabelModal(node) {
+                this.removeNodeName = node.name || ''
+                this.removeSelectedLabels = {}
+                this.removeCustomLabelKey = ''
+                this.removingLabel = false
+                $('#k3sRemoveNodeLabelModal').modal('show')
+            },
+            async submitRemoveNodeLabel() {
+                const nodeName = this.removeNodeName || ''
+                if (!nodeName) {
+                    bootbox.alert('请选择 Node')
+                    return
+                }
+
+                const labelKeys = []
+                for (const key in this.removeSelectedLabels) {
+                    if (this.removeSelectedLabels[key]) {
+                        labelKeys.push(key)
+                    }
+                }
+
+                if (this.removeCustomLabelKey) {
+                    const key = this.removeCustomLabelKey.trim()
+                    if (key) {
+                        labelKeys.push(key)
+                    }
+                }
+
+                if (labelKeys.length === 0) {
+                    bootbox.alert('请选择或输入至少一个要删除的标签')
+                    return
+                }
+
+                if (this.removingLabel) {
+                    return
+                }
+
+                try {
+                    this.removingLabel = true
+                    bootboxLoading('删除 Label 中...')
+                    const url = '/api/k3s/node/label/remove?name=' + encodeURIComponent(nodeName)
+                    const result = await axios.post(url, { labelKeys: labelKeys })
+                    bootbox.hideAll()
+                    this.removingLabel = false
+                    if (!result.data || result.data.code !== 0) {
+                        bootbox.alert('删除 Label 失败：' + ((result.data && result.data.message) || '未知错误'))
+                        return
+                    }
+                    $('#k3sRemoveNodeLabelModal').modal('hide')
+                    bootbox.alert('Label 删除成功', async () => {
+                        await this.fetchNodes()
+                    })
+                } catch (e) {
+                    bootbox.hideAll()
+                    this.removingLabel = false
+                    bootbox.alert('删除 Label 失败：' + (e && e.message ? e.message : e))
+                }
+            },
+            async rolloutRestart(item) {
+                const meta = this.getMeta(item)
+                const name = meta.name
+                const ns = meta.namespace || this.currentNamespace
+                const r = (this.currentResource || '').trim()
+                if (!name || !r) {
+                    bootbox.alert('缺少 name/resource，无法 rollout restart')
+                    return
+                }
+                if (!this.isRolloutRestartSupported) {
+                    bootbox.alert('当前资源不支持 rollout restart')
+                    return
+                }
+                bootbox.confirm(`确认 rollout restart ${r} ${ns}/${name} ?`, async (yes) => {
+                    if (!yes) {
+                        return
+                    }
+                    try {
+                        bootboxLoading('rollout restart 中...')
+                        const url = '/api/k3s/rollout/restart/' + encodeURIComponent(r)
+                        const result = await axios.post(url, null, {
+                            params: {
+                                name: name,
+                                namespace: ns,
+                            }
+                        })
+                        bootbox.hideAll()
+                        if (!result.data || result.data.code !== 0) {
+                            bootbox.alert('rollout restart 失败：' + ((result.data && result.data.message) || '未知错误'))
+                            return
+                        }
+                        const data = result.data.data || {}
+                        const restartedAt = data && data.restartedAt ? String(data.restartedAt) : ''
+                        const msg = restartedAt ? ('重启已触发：' + restartedAt) : '重启已触发'
+                        bootbox.alert(msg, async () => {
+                            await this.fetchList()
+                        })
+                    } catch (e) {
+                        bootbox.hideAll()
+                        bootbox.alert('rollout restart 失败：' + (e && e.message ? e.message : e))
+                    }
+                })
+            },
+            scaleResource(item) {
+                const meta = this.getMeta(item)
+                const name = meta.name
+                const ns = meta.namespace || this.currentNamespace
+                const r = (this.currentResource || '').trim()
+                if (!name || !r) {
+                    bootbox.alert('缺少 name/resource，无法 scale')
+                    return
+                }
+                if (!this.isScaleSupported) {
+                    bootbox.alert('当前资源不支持 scale')
+                    return
+                }
+                // 获取当前副本数
+                let currentReplicas = ''
+                const spec = (item && item.spec) || {}
+                if (spec.replicas != null) {
+                    currentReplicas = String(spec.replicas)
+                }
+                bootbox.prompt({
+                    title: 'Scale ' + r + ' ' + ns + '/' + name,
+                    message: '<p>当前副本数：<strong>' + (currentReplicas || '未知') + '</strong></p><p>请输入新的副本数：</p>',
+                    inputType: 'number',
+                    value: currentReplicas,
+                    callback: async (result) => {
+                        if (result === null) {
+                            return
+                        }
+                        const replicas = parseInt(result, 10)
+                        if (isNaN(replicas) || replicas < 0) {
+                            bootbox.alert('请输入有效的副本数（>= 0）')
+                            return
+                        }
+                        try {
+                            bootboxLoading('scale 中...')
+                            const url = '/api/k3s/scale/' + encodeURIComponent(r)
+                            const resp = await axios.post(url, null, {
+                                params: {
+                                    name: name,
+                                    namespace: ns,
+                                    replicas: replicas,
+                                }
+                            })
+                            bootbox.hideAll()
+                            if (!resp.data || resp.data.code !== 0) {
+                                bootbox.alert('scale 失败：' + ((resp.data && resp.data.message) || '未知错误'))
+                                return
+                            }
+                            const data = resp.data.data || {}
+                            const prev = data.previousReplicas != null ? data.previousReplicas : '?'
+                            const curr = data.currentReplicas != null ? data.currentReplicas : '?'
+                            bootbox.alert('Scale 成功：' + prev + ' → ' + curr, async () => {
+                                await this.fetchList()
+                            })
+                        } catch (e) {
+                            bootbox.hideAll()
+                            bootbox.alert('scale 失败：' + (e && e.message ? e.message : e))
+                        }
+                    }
+                })
+            },
+            openUpdateResourceModal(item) {
+                const meta = this.getMeta(item)
+                const name = meta.name
+                const ns = meta.namespace || this.currentNamespace
+                const r = (this.currentResource || '').trim()
+                if (!name || !r) {
+                    bootbox.alert('缺少 name/resource，无法更新资源')
+                    return
+                }
+                if (!this.isResourceUpdateSupported) {
+                    bootbox.alert('当前资源不支持更新资源配额')
+                    return
+                }
+                const containers = this.getContainers(item)
+                this.updateResTarget = { resource: r, name: name, namespace: ns }
+                this.updateResContainers = containers.map((c, i) => ({
+                    name: (c && c.name) ? c.name : ('#' + i),
+                    resources: (c && c.resources) || {},
+                }))
+                // 默认选中第一个容器
+                this.updateResSelectedContainer = this.updateResContainers.length ? this.updateResContainers[0].name : ''
+                this.fillResourceFormFromContainer()
+                this.updatingResource = false
+                $('#k3sUpdateResourceModal').modal('show')
+            },
+            fillResourceFormFromContainer() {
+                // 根据当前选中容器回填现有值，方便在原值上修改
+                let target = null
+                for (let i = 0; i < this.updateResContainers.length; i++) {
+                    if (this.updateResContainers[i].name === this.updateResSelectedContainer) {
+                        target = this.updateResContainers[i]
+                        break
+                    }
+                }
+                const res = (target && target.resources) || {}
+                const req = res.requests || {}
+                const lim = res.limits || {}
+                this.updateResForm = {
+                    request_cpu: req.cpu != null ? String(req.cpu) : '',
+                    request_memory: req.memory != null ? String(req.memory) : '',
+                    limit_cpu: lim.cpu != null ? String(lim.cpu) : '',
+                    limit_memory: lim.memory != null ? String(lim.memory) : '',
+                }
+            },
+            async submitUpdateResource() {
+                if (this.updatingResource) {
+                    return
+                }
+                const t = this.updateResTarget || {}
+                const name = (t.name || '').trim()
+                const ns = (t.namespace || '').trim()
+                const r = (t.resource || '').trim()
+                if (!name || !r) {
+                    bootbox.alert('缺少 name/resource，无法更新资源')
+                    return
+                }
+                const containerName = (this.updateResSelectedContainer || '').trim()
+                if (!containerName) {
+                    bootbox.alert('未选择容器，无法更新资源')
+                    return
+                }
+                const form = this.updateResForm || {}
+                // 每项：留空=不改（不进入 patch）；'-'=删除（strategic merge patch 中用 null 表示）；其它=设置
+                const buildSection = (cpu, memory) => {
+                    const section = {}
+                    const c = (cpu || '').trim()
+                    const m = (memory || '').trim()
+                    if (c) section.cpu = (c === '-') ? null : c
+                    if (m) section.memory = (m === '-') ? null : m
+                    return section
+                }
+                const requests = buildSection(form.request_cpu, form.request_memory)
+                const limits = buildSection(form.limit_cpu, form.limit_memory)
+                const resources = {}
+                if (Object.keys(requests).length) resources.requests = requests
+                if (Object.keys(limits).length) resources.limits = limits
+                if (!Object.keys(resources).length) {
+                    bootbox.alert('请至少填写一项要更新的资源（留空表示不修改，填 - 表示删除该项）')
+                    return
+                }
+                // strategic merge patch：containers 按 name 合并，只改指定容器的 resources
+                const patch = {
+                    spec: {
+                        template: {
+                            spec: {
+                                containers: [
+                                    { name: containerName, resources: resources },
+                                ],
+                            },
+                        },
+                    },
+                }
+                try {
+                    this.updatingResource = true
+                    bootboxLoading('更新资源中...')
+                    const url = '/api/k3s/patch/' + encodeURIComponent(r)
+                    const resp = await axios.post(url, patch, {
+                        params: { name: name, namespace: ns, type: 'strategic' },
+                    })
+                    bootbox.hideAll()
+                    if (!resp.data || resp.data.code !== 0) {
+                        bootbox.alert('更新资源失败：' + ((resp.data && resp.data.message) || '未知错误'))
+                        return
+                    }
+                    $('#k3sUpdateResourceModal').modal('hide')
+                    bootbox.alert('更新资源成功（容器：' + containerName + '）', async () => {
+                        await this.fetchList()
+                    })
+                } catch (e) {
+                    bootbox.hideAll()
+                    bootbox.alert('更新资源失败：' + (e && e.message ? e.message : e))
+                } finally {
+                    this.updatingResource = false
+                }
+            },
+            openScheduleModal(item) {
+                const meta = this.getMeta(item)
+                const name = meta.name
+                const ns = meta.namespace || this.currentNamespace
+                const r = (this.currentResource || '').trim()
+                if (!name || !r) {
+                    bootbox.alert('缺少 name/resource，无法设置调度')
+                    return
+                }
+                if (!this.isScheduleSupported) {
+                    bootbox.alert('当前资源不支持设置调度')
+                    return
+                }
+                const podSpec = (item && item.spec && item.spec.template && item.spec.template.spec) || {}
+                const current = {}
+                const ns0 = podSpec.nodeSelector || {}
+                Object.keys(ns0).forEach((k) => {
+                    current[k] = ns0[k] == null ? '' : String(ns0[k])
+                })
+                this.scheduleTarget = { resource: r, name: name, namespace: ns }
+                this.scheduleOriginal = Object.assign({}, current)
+                this.scheduleSelector = Object.assign({}, current)
+                this.scheduleFilter = ''
+                this.scheduleCustomInput = ''
+                this.scheduling = false
+                // 节点数据只在页面加载时取过一次，没有的话补取，保证有 label 可选
+                if (!this.nodeRows || !this.nodeRows.length) {
+                    this.fetchNodes()
+                }
+                $('#k3sScheduleModal').modal('show')
+            },
+            isScheduleLabelSelected(key, value) {
+                const sel = this.scheduleSelector || {}
+                return Object.prototype.hasOwnProperty.call(sel, key) && sel[key] === value
+            },
+            toggleScheduleLabel(key, value) {
+                // 每次都生成新对象，保证视图更新
+                const next = Object.assign({}, this.scheduleSelector)
+                if (this.isScheduleLabelSelected(key, value)) {
+                    delete next[key]
+                } else {
+                    next[key] = value
+                }
+                this.scheduleSelector = next
+            },
+            removeScheduleKey(key) {
+                const next = Object.assign({}, this.scheduleSelector)
+                delete next[key]
+                this.scheduleSelector = next
+            },
+            addScheduleCustom() {
+                const text = (this.scheduleCustomInput || '').trim()
+                if (!text) {
+                    return
+                }
+                const idx = text.indexOf('=')
+                if (idx < 0) {
+                    bootbox.alert('格式错误，请输入 key=value')
+                    return
+                }
+                const key = text.substring(0, idx).trim()
+                const value = text.substring(idx + 1).trim()
+                if (!key) {
+                    bootbox.alert('label 的 key 不能为空')
+                    return
+                }
+                this.scheduleSelector = Object.assign({}, this.scheduleSelector, { [key]: value })
+                this.scheduleCustomInput = ''
+            },
+            async submitSchedule() {
+                if (this.scheduling) {
+                    return
+                }
+                const t = this.scheduleTarget || {}
+                const name = (t.name || '').trim()
+                const ns = (t.namespace || '').trim()
+                const r = (t.resource || '').trim()
+                if (!name || !r) {
+                    bootbox.alert('缺少 name/resource，无法设置调度')
+                    return
+                }
+                const original = this.scheduleOriginal || {}
+                const desired = this.scheduleSelector || {}
+                // strategic merge patch 对 map 是逐 key 合并：新增/修改的 key 写值，需要移除的 key 写 null
+                const nodeSelector = {}
+                let changed = false
+                Object.keys(desired).forEach((k) => {
+                    if (!Object.prototype.hasOwnProperty.call(original, k) || original[k] !== desired[k]) {
+                        nodeSelector[k] = desired[k]
+                        changed = true
+                    }
+                })
+                Object.keys(original).forEach((k) => {
+                    if (!Object.prototype.hasOwnProperty.call(desired, k)) {
+                        nodeSelector[k] = null
+                        changed = true
+                    }
+                })
+                if (!changed) {
+                    bootbox.alert('nodeSelector 没有变化')
+                    return
+                }
+                const patch = {
+                    spec: {
+                        template: {
+                            spec: {
+                                nodeSelector: nodeSelector,
+                            },
+                        },
+                    },
+                }
+                try {
+                    this.scheduling = true
+                    bootboxLoading('保存调度中...')
+                    const url = '/api/k3s/patch/' + encodeURIComponent(r)
+                    const resp = await axios.post(url, patch, {
+                        params: { name: name, namespace: ns, type: 'strategic' },
+                    })
+                    bootbox.hideAll()
+                    if (!resp.data || resp.data.code !== 0) {
+                        bootbox.alert('保存调度失败：' + ((resp.data && resp.data.message) || '未知错误'))
+                        return
+                    }
+                    $('#k3sScheduleModal').modal('hide')
+                    bootbox.alert('保存调度成功', async () => {
+                        await this.fetchList()
+                    })
+                } catch (e) {
+                    bootbox.hideAll()
+                    bootbox.alert('保存调度失败：' + (e && e.message ? e.message : e))
+                } finally {
+                    this.scheduling = false
+                }
+            },
+            onApplyFileChange(e) {
+                try {
+                    const files = (e && e.target && e.target.files) ? e.target.files : []
+                    if (!files || files.length < 1) {
+                        return
+                    }
+                    const f = files[0]
+                    this.applyFileName = (f && f.name) ? f.name : ''
+                    const reader = new FileReader()
+                    reader.onload = () => {
+                        try {
+                            const text = reader.result != null ? String(reader.result) : ''
+                            this.applyYamlText = text
+                            if (this.cmApplyEditor) {
+                                this.cmApplyEditor.setValue(text)
+                                this.cmApplyEditor.refresh()
+                            }
+                        } catch (err) {
+                            bootbox.alert('读取文件失败：' + (err && err.message ? err.message : err))
+                        }
+                    }
+                    reader.onerror = () => {
+                        bootbox.alert('读取文件失败')
+                    }
+                    reader.readAsText(f)
+                } catch (err) {
+                    bootbox.alert('读取文件失败：' + (err && err.message ? err.message : err))
+                }
+            },
+            async submitApplyYaml() {
+                const raw = this.cmApplyEditor ? this.cmApplyEditor.getValue() : this.applyYamlText
+                const text = (raw || '').trim()
+                if (!text) {
+                    bootbox.alert('请填写 YAML 内容')
+                    return
+                }
+                if (this.applying) {
+                    return
+                }
+                try {
+                    this.applying = true
+                    this.applyResults = []
+                    bootboxLoading('Applying...')
+                    const result = await axios.post('/api/k3s/apply', text, {
+                        headers: { 'Content-Type': 'text/plain' },
+                        transformRequest: [(d) => d],
+                    })
+                    bootbox.hideAll()
+                    this.applying = false
+                    if (!result.data || result.data.code !== 0) {
+                        bootbox.alert('Apply 失败：' + ((result.data && result.data.message) || '未知错误'))
+                        return
+                    }
+                    const list = result.data.data || []
+                    this.applyResults = Array.isArray(list) ? list : []
+
+                    let hasOk = false
+                    for (let i = 0; i < this.applyResults.length; i++) {
+                        const r = this.applyResults[i]
+                        if (r && (r.action === 'created' || r.action === 'updated')) {
+                            hasOk = true
+                            break
+                        }
+                    }
+                    if (hasOk) {
+                        await this.fetchList()
+                    }
+                } catch (e) {
+                    bootbox.hideAll()
+                    this.applying = false
+                    bootbox.alert('Apply 失败：' + (e && e.message ? e.message : e))
+                }
+            },
+            initFromQuery() {
+                const qNs = (typeof getQuery === 'function' ? getQuery('namespace', '') : '')
+                const qRes = (typeof getQuery === 'function' ? getQuery('resource', '') : '')
+                if (qRes) {
+                    const v = String(qRes).trim()
+                    const ok = this.resourceList.some((r) => r && r.value === v)
+                    if (ok) {
+                        this.currentResource = v
+                    }
+                }
+                if (qNs) {
+                    this.currentNamespace = String(qNs).trim()
+                }
+            },
+            syncQueryToUrl() {
+                try {
+                    const url = new URL(window.location.href)
+                    const ns = (this.currentNamespace || '').trim()
+                    const r = (this.currentResource || '').trim()
+                    if (ns) {
+                        url.searchParams.set('namespace', ns)
+                    } else {
+                        url.searchParams.delete('namespace')
+                    }
+                    if (r) {
+                        url.searchParams.set('resource', r)
+                    } else {
+                        url.searchParams.delete('resource')
+                    }
+                    window.history.replaceState({}, '', url.toString())
+                } catch (e) {
+                    // ignore
+                }
+            },
+            async fetchNamespaces() {
+                try {
+                    const result = await axios.get('/api/k3s/list/namespace')
+                    bootbox.hideAll()
+                    if (!result.data || result.data.code !== 0) {
+                        bootbox.alert('加载namespace失败：' + ((result.data && result.data.message) || '未知错误'))
+                        this.namespaceList = []
+                        return
+                    }
+                    const items = (result.data.data && result.data.data.items) ? result.data.data.items : []
+                    const list = []
+                    for (let i = 0; i < items.length; i++) {
+                        const meta = this.getMeta(items[i])
+                        if (meta && meta.name) {
+                            list.push(meta.name)
+                        }
+                    }
+                    this.namespaceList = list
+                    if (!this.currentNamespace && list.length > 0) {
+                        // 默认优先选 business namespace（忽略大小写）
+                        let picked = ''
+                        for (let i = 0; i < list.length; i++) {
+                            const n = (list[i] || '')
+                            if (String(n).toLowerCase().indexOf('business') >= 0) {
+                                picked = n
+                                break
+                            }
+                        }
+                        this.currentNamespace = picked || list[0]
+                    }
+                } catch (e) {
+                    bootbox.hideAll()
+                    this.namespaceList = []
+                    bootbox.alert('加载namespace失败：' + (e && e.message ? e.message : e))
+                }
+            },
+            async fetchList(silent) {
+                const ns = (this.currentNamespace || '').trim()
+                const r = (this.currentResource || '').trim()
+                if (!ns || !r) {
+                    return
+                }
+                if (this.fetchingList) {
+                    return
+                }
+                try {
+                    this.fetchingList = true
+                    const url = '/api/k3s/list/' + encodeURIComponent(r) + '?namespace=' + encodeURIComponent(ns)
+                    const result = await axios.get(url)
+                    if (!result.data || result.data.code !== 0) {
+                        if (!silent) {
+                            bootbox.alert('加载资源失败：' + ((result.data && result.data.message) || '未知错误'))
+                            this.rows = []
+                        }
+                        return
+                    }
+                    const data = result.data.data || {}
+                    const items = data.items || []
+                    this.rows = items
+                } catch (e) {
+                    console && console.warn && console.warn('silent fetchList failed', e)
+                } finally {
+                    this.fetchingList = false
+                }
+            },
+            getMeta(item) {
+                if (!item) {
+                    return { name: '', namespace: '', uid: '', creationTimestamp: '' }
+                }
+                const m = item.metadata || item.meta || {}
+                return {
+                    name: m.name || '',
+                    namespace: m.namespace || '',
+                    uid: m.uid || '',
+                    creationTimestamp: m.creationTimestamp || '',
+                }
+            },
+            getAge(item) {
+                const ts = this.getMeta(item).creationTimestamp
+                if (!ts) {
+                    return ''
+                }
+                // 不依赖 dayjs relativeTime 插件（页面未加载，fromNow 不存在），自己算成 1s / 2m / 3h / 5d
+                const created = Date.parse(ts)
+                if (isNaN(created)) {
+                    return ts
+                }
+                // 本机时钟比集群快/慢时可能出现负数，按 0 处理
+                const sec = Math.max(0, Math.floor((Date.now() - created) / 1000))
+                if (sec < 60) return sec + 's'
+                const min = Math.floor(sec / 60)
+                if (min < 60) return min + 'm'
+                const hour = Math.floor(min / 60)
+                if (hour < 24) return hour + 'h'
+                return Math.floor(hour / 24) + 'd'
+            },
+            getContainers(item) {
+                const spec = (item && item.spec) || {}
+                const tmpl = spec.template || {}
+                const podSpec = tmpl.spec || {}
+                return Array.isArray(podSpec.containers) ? podSpec.containers : []
+            },
+            formatContainerResources(item, kind) {
+                // kind: 'requests' | 'limits'
+                const containers = this.getContainers(item)
+                if (!containers.length) return ''
+                const parts = []
+                for (let i = 0; i < containers.length; i++) {
+                    const c = containers[i] || {}
+                    const res = c.resources || {}
+                    const r = res[kind] || {}
+                    const cpu = r.cpu != null ? r.cpu : '-'
+                    const mem = r.memory != null ? r.memory : '-'
+                    if (cpu === '-' && mem === '-') {
+                        continue
+                    }
+                    const label = containers.length > 1 ? (c.name || ('#' + i)) + ': ' : ''
+                    parts.push(`${label}cpu=${cpu} mem=${mem}`)
+                }
+                return parts.join('; ')
+            },
+            renderCell(item, key) {
+                try {
+                    if (key === 'age') {
+                        return this.getAge(item)
+                    }
+                    const r = (this.currentResource || '').toLowerCase()
+                    if (key.startsWith('deploy_')) {
+                        const st = (item && item.status) || {}
+                        const ready = st.readyReplicas || 0
+                        const replicas = st.replicas || 0
+                        if (key === 'deploy_ready') return `${ready}/${replicas}`
+                        if (key === 'deploy_available') return st.availableReplicas != null ? st.availableReplicas : ''
+                        if (key === 'deploy_requestResource') return this.formatContainerResources(item, 'requests')
+                        if (key === 'deploy_limitResource') return this.formatContainerResources(item, 'limits')
+                    }
+                    if (key.startsWith('svc_')) {
+                        const spec = (item && item.spec) || {}
+                        if (key === 'svc_type') return spec.type || ''
+                        if (key === 'svc_clusterIP') return spec.clusterIP || ''
+                        if (key === 'svc_ports') {
+                            const ports = spec.ports || []
+                            return ports.map(p => {
+                                const port = p.port != null ? p.port : ''
+                                const targetPort = p.targetPort != null ? p.targetPort : ''
+                                const protocol = p.protocol || ''
+                                return `${port}:${targetPort}/${protocol}`
+                            }).join(', ')
+                        }
+                    }
+                    if (key.startsWith('pod_')) {
+                        const st = (item && item.status) || {}
+                        const spec = (item && item.spec) || {}
+                        if (key === 'pod_status') {
+                            const meta = this.getMeta(item)
+                            const deletionTs = (item && item.metadata && item.metadata.deletionTimestamp) ? item.metadata.deletionTimestamp : ''
+                            if (deletionTs) {
+                                return 'Terminating'
+                            }
+                            // 部分集群会把 deletionTimestamp 放在 metadata 里但 getMeta 未返回，这里兜底
+                            if (meta && meta.deletionTimestamp) {
+                                return 'Terminating'
+                            }
+                            return st.phase || ''
+                        }
+                        if (key === 'pod_node') return spec.nodeName || ''
+                        if (key === 'pod_node_ip') {
+                            const nodeName = spec.nodeName || ''
+                            if (!nodeName || !this.nodeRows || !this.nodeRows.length) return ''
+                            for (let i = 0; i < this.nodeRows.length; i++) {
+                                if (this.nodeRows[i] && this.nodeRows[i].name === nodeName) {
+                                    return this.nodeRows[i].internal_ip || ''
+                                }
+                            }
+                            return ''
+                        }
+                        if (key === 'pod_ready') {
+                            const cs = st.containerStatuses || []
+                            let ready = 0
+                            for (let i = 0; i < cs.length; i++) {
+                                if (cs[i] && cs[i].ready) ready++
+                            }
+                            return `${ready}/${cs.length}`
+                        }
+                        if (key === 'pod_restarts') {
+                            const cs = st.containerStatuses || []
+                            let total = 0
+                            for (let i = 0; i < cs.length; i++) {
+                                total += (cs[i] && cs[i].restartCount) ? cs[i].restartCount : 0
+                            }
+                            return total
+                        }
+                    }
+                    if (key.startsWith('cj_')) {
+                        const spec = (item && item.spec) || {}
+                        const st = (item && item.status) || {}
+                        if (key === 'cj_schedule') return spec.schedule || ''
+                        if (key === 'cj_suspend') return spec.suspend === true ? 'true' : (spec.suspend === false ? 'false' : '')
+                        if (key === 'cj_lastSchedule') return st.lastScheduleTime || ''
+                        if (key === 'cj_active') return (st.active && st.active.length) ? st.active.length : 0
+                    }
+                    if (key.startsWith('cm_')) {
+                        const data = (item && item.data) || {}
+                        if (key === 'cm_dataCount') return data ? Object.keys(data).length : 0
+                        if (key === 'cm_immutable') return item.immutable === true ? 'true' : (item.immutable === false ? 'false' : '')
+                    }
+                    if (key.startsWith('ds_')) {
+                        const st = (item && item.status) || {}
+                        if (key === 'ds_desired') return st.desiredNumberScheduled != null ? st.desiredNumberScheduled : ''
+                        if (key === 'ds_current') return st.currentNumberScheduled != null ? st.currentNumberScheduled : ''
+                        if (key === 'ds_ready') return st.numberReady != null ? st.numberReady : ''
+                        if (key === 'ds_upToDate') return st.updatedNumberScheduled != null ? st.updatedNumberScheduled : ''
+                    }
+                    if (key.startsWith('sts_')) {
+                        const st = (item && item.status) || {}
+                        if (key === 'sts_ready') return `${st.readyReplicas || 0}/${st.replicas || 0}`
+                        if (key === 'sts_current') return st.currentReplicas != null ? st.currentReplicas : ''
+                        if (key === 'sts_updateRevision') return st.updateRevision || ''
+                    }
+                    if (key.startsWith('sa_')) {
+                        if (key === 'sa_secrets') return (item.secrets && item.secrets.length) ? item.secrets.length : 0
+                        if (key === 'sa_automount') {
+                            const v = item.automountServiceAccountToken
+                            return v === true ? 'true' : (v === false ? 'false' : '')
+                        }
+                    }
+                    if (key.startsWith('ir_')) {
+                        const spec = (item && item.spec) || {}
+                        if (key === 'ir_entryPoints') {
+                            const eps = spec.entryPoints || []
+                            return Array.isArray(eps) ? eps.join(', ') : ''
+                        }
+                        if (key === 'ir_tls') {
+                            return spec.tls ? 'true' : ''
+                        }
+                        if (key === 'ir_routes') {
+                            const routes = spec.routes || []
+                            if (!Array.isArray(routes) || routes.length < 1) return 0
+                            const first = routes[0] || {}
+                            const m = first.match || ''
+                            return m ? `${routes.length} | ${m}` : routes.length
+                        }
+                    }
+
+                    // fallback
+                    if (r) {
+                        return ''
+                    }
+                } catch (e) {
+                    return ''
+                }
+                return ''
+            },
+            async showDetail(item) {
+                const meta = this.getMeta(item)
+                const name = meta.name
+                const ns = meta.namespace || this.currentNamespace
+                const r = (this.currentResource || '').trim()
+                if (!name || !r) {
+                    bootbox.alert('缺少 name/resource，无法查询详情')
+                    return
+                }
+                try {
+                    bootboxLoading('查询详情中...')
+                    const url = '/api/k3s/get/' + encodeURIComponent(r) + '?name=' + encodeURIComponent(name) + '&namespace=' + encodeURIComponent(ns) + '&format=yaml'
+                    const result = await axios.get(url, {
+                        responseType: 'text',
+                        transformResponse: [(d) => d],
+                    })
+                    bootbox.hideAll()
+                    const text = result && result.data != null ? String(result.data) : ''
+                    // 兼容后端返回 JSON 错误结构（code/message）
+                    try {
+                        const o = JSON.parse(text)
+                        if (o && o.code != null && o.code !== 0) {
+                            bootbox.alert('查询详情失败：' + (o.message || '未知错误'))
+                            return
+                        }
+                    } catch (e) {
+                        // ignore, treat as yaml
+                    }
+                    this.detailTitle = `${r} ${ns}/${name}`
+                    this.detailYaml = text
+                    const safeName = String(`${r}_${ns}_${name}`).replace(/[^a-zA-Z0-9_.-]+/g, '_')
+                    this.detailDownloadName = `${safeName}.yaml`
+                    this.openDetailModal('yaml')
+                } catch (e) {
+                    bootbox.hideAll()
+                    bootbox.alert('查询详情失败：' + (e && e.message ? e.message : e))
+                }
+            },
+            async showPodLog(item) {
+                if (!this.isPodResource) {
+                    bootbox.alert('当前 resource 不是 pod，无法查看日志')
+                    return
+                }
+                const meta = this.getMeta(item)
+                const name = meta.name
+                const ns = meta.namespace || this.currentNamespace
+                if (!name) {
+                    bootbox.alert('缺少 pod name，无法获取日志')
+                    return
+                }
+                try {
+                    bootboxLoading('加载日志…')
+                    const url = '/api/k3s/log/' + encodeURIComponent(name)
+                    const result = await axios.get(url, {
+                        params: {
+                            namespace: ns,
+                            tail: 1000,
+                        },
+                    })
+                    bootbox.hideAll()
+                    if (!result.data || result.data.code !== 0) {
+                        bootbox.alert('获取日志失败：' + ((result.data && result.data.message) || '未知错误'))
+                        return
+                    }
+                    const d = result.data.data || {}
+                    const log = d.log != null ? String(d.log) : ''
+                    this.podLogTitle = `Pod 日志（最近 1000 行）${ns}/${name}`
+                    this.podLogText = log
+                    $('#k3sPodLogModal').modal('show')
+                } catch (e) {
+                    bootbox.hideAll()
+                    bootbox.alert('获取日志失败：' + (e && e.message ? e.message : e))
+                }
+            },
+            async downloadPodLog(item) {
+                if (!this.isPodResource) {
+                    bootbox.alert('当前 resource 不是 pod，无法下载日志')
+                    return
+                }
+                const meta = this.getMeta(item)
+                const name = meta.name
+                const ns = meta.namespace || this.currentNamespace
+                if (!name) {
+                    bootbox.alert('缺少 pod name，无法下载日志')
+                    return
+                }
+                try {
+                    bootboxLoading('下载日志中…')
+                    const url = '/api/k3s/log/' + encodeURIComponent(name)
+                    const result = await axios.get(url, {
+                        params: {
+                            namespace: ns,
+                            tail: 0,
+                        },
+                    })
+                    bootbox.hideAll()
+                    if (!result.data || result.data.code !== 0) {
+                        bootbox.alert('获取日志失败：' + ((result.data && result.data.message) || '未知错误'))
+                        return
+                    }
+                    const d = result.data.data || {}
+                    const log = d.log != null ? String(d.log) : ''
+                    const safeNs = String(ns || '').replace(/[^a-zA-Z0-9_.-]+/g, '_')
+                    const safeName = String(name || '').replace(/[^a-zA-Z0-9_.-]+/g, '_')
+                    const fileName = `pod-log_${safeNs}_${safeName}.log`
+                    saveFile(log, fileName)
+                } catch (e) {
+                    bootbox.hideAll()
+                    bootbox.alert('下载日志失败：' + (e && e.message ? e.message : e))
+                }
+            },
+            async deleteResource(item) {
+                const meta = this.getMeta(item)
+                const name = meta.name
+                const ns = meta.namespace || this.currentNamespace
+                const r = (this.currentResource || '').trim()
+                if (!name || !r) {
+                    bootbox.alert('缺少 name/resource，无法删除')
+                    return
+                }
+                bootbox.confirm(`确认删除 ${r} ${ns}/${name} ?`, async (yes) => {
+                    if (!yes) {
+                        return
+                    }
+                    try {
+                        bootboxLoading('删除中...')
+                        const url = '/api/k3s/delete/' + encodeURIComponent(r)
+                        const result = await axios.delete(url, {
+                            params: {
+                                name: name,
+                                namespace: ns,
+                            }
+                        })
+                        bootbox.hideAll()
+                        if (!result.data || result.data.code !== 0) {
+                            bootbox.alert('删除失败：' + ((result.data && result.data.message) || '未知错误'))
+                            return
+                        }
+                        bootbox.alert('删除成功', async () => {
+                            await this.fetchList()
+                        })
+                    } catch (e) {
+                        bootbox.hideAll()
+                        bootbox.alert('删除失败：' + (e && e.message ? e.message : e))
+                    }
+                })
+            },
+            gotoImageManager() {
+                window.open('/k3s/image2', '_blank')
+            },
+            // ====== 资源 YAML 编辑（ConfigMap / Deployment / Service / Cronjob / IngressRoute 等）======
+            cmReplaceStorageKey() {
+                return 'k3s_configmap_replace_rules'
+            },
+            loadReplaceRules() {
+                try {
+                    const raw = localStorage.getItem(this.cmReplaceStorageKey())
+                    if (!raw) {
+                        return []
+                    }
+                    const list = JSON.parse(raw)
+                    if (!Array.isArray(list)) {
+                        return []
+                    }
+                    // 仅保留结构正确的规则
+                    return list
+                        .filter((r) => r && typeof r === 'object')
+                        .map((r) => ({ old: String(r.old == null ? '' : r.old), new: String(r.new == null ? '' : r.new) }))
+                } catch (e) {
+                    return []
+                }
+            },
+            saveReplaceRules() {
+                try {
+                    const list = (this.cmReplaceRules || []).map((r) => ({ old: String(r.old || ''), new: String(r.new || '') }))
+                    localStorage.setItem(this.cmReplaceStorageKey(), JSON.stringify(list))
+                } catch (e) {
+                    // ignore
+                }
+            },
+            addReplaceRule() {
+                this.cmReplaceRules.push({ old: '', new: '' })
+            },
+            removeReplaceRule(index) {
+                this.cmReplaceRules.splice(index, 1)
+                this.saveReplaceRules()
+            },
+            // 对编辑器全文做一次 old -> new 的全局替换
+            replaceInEditor(oldText, newText) {
+                if (!this.cmEditor || !oldText) {
+                    return 0
+                }
+                const src = this.cmEditor.getValue()
+                const parts = src.split(oldText)
+                const count = parts.length - 1
+                if (count > 0) {
+                    this.cmEditor.setValue(parts.join(newText == null ? '' : newText))
+                }
+                return count
+            },
+            applyAllReplaceRules() {
+                this.saveReplaceRules()
+                if (!this.cmEditor) {
+                    return
+                }
+                let total = 0
+                for (let i = 0; i < this.cmReplaceRules.length; i++) {
+                    const rule = this.cmReplaceRules[i]
+                    if (rule && rule.old) {
+                        total += this.replaceInEditor(rule.old, rule.new)
+                    }
+                }
+                bootbox.alert('已应用全部替换规则，共替换 ' + total + ' 处')
+            },
+            reloadOriginalResource() {
+                if (this.cmEditor) {
+                    this.cmEditor.setValue(this.cmOriginalYaml || '')
+                }
+            },
+            async openEditResourceModal(item) {
+                const meta = this.getMeta(item)
+                const name = meta.name
+                const ns = meta.namespace || this.currentNamespace
+                const r = (this.currentResource || '').trim()
+                if (!name) {
+                    bootbox.alert('缺少 name，无法编辑')
+                    return
+                }
+                if (!r) {
+                    bootbox.alert('缺少 resource，无法编辑')
+                    return
+                }
+                try {
+                    bootboxLoading('加载 ' + r + '...')
+                    const url = '/api/k3s/get/' + encodeURIComponent(r) + '?name=' + encodeURIComponent(name) + '&namespace=' + encodeURIComponent(ns) + '&format=yaml'
+                    const result = await axios.get(url, {
+                        responseType: 'text',
+                        transformResponse: [(d) => d],
+                    })
+                    bootbox.hideAll()
+                    const text = result && result.data != null ? String(result.data) : ''
+                    // 兼容后端返回 JSON 错误结构
+                    try {
+                        const o = JSON.parse(text)
+                        if (o && o.code != null && o.code !== 0) {
+                            bootbox.alert('加载失败：' + (o.message || '未知错误'))
+                            return
+                        }
+                    } catch (e) {
+                        // ignore, treat as yaml
+                    }
+                    this.cmEditTarget = { resource: r, name: name, namespace: ns }
+                    this.cmOriginalYaml = text
+                    this.cmReplaceRules = this.loadReplaceRules()
+                    const $modal = $('#k3sEditResourceModal')
+                    // 必须等模态框显示动画结束、容器拿到真实尺寸后再初始化 CodeMirror，
+                    // 否则行高/高度会按隐藏容器测量，出现大片空白。用 shown.bs.modal 取代定时器。
+                    $modal.off('shown.bs.modal.k3sedit').one('shown.bs.modal.k3sedit', () => {
+                        const created = !this.cmEditor
+                        this.ensureResourceEditor()
+                        if (this.cmEditor) {
+                            this.cmEditor.setValue(text)
+                            // 自动套用已缓存的替换规则
+                            for (let i = 0; i < this.cmReplaceRules.length; i++) {
+                                const rule = this.cmReplaceRules[i]
+                                if (rule && rule.old) {
+                                    this.replaceInEditor(rule.old, rule.new)
+                                }
+                            }
+                            // 首次创建时，DOM 尚未完成布局，同步 refresh 会按错误尺寸测量，
+                            // 导致顶部出现大片空白且无法编辑；延迟到下一帧布局稳定后再刷新。
+                            const refreshEditor = () => {
+                                if (this.cmEditor) {
+                                    this.cmEditor.refresh()
+                                    this.cmEditor.focus()
+                                }
+                            }
+                            if (created) {
+                                requestAnimationFrame(() => requestAnimationFrame(refreshEditor))
+                            } else {
+                                refreshEditor()
+                            }
+                        }
+                    })
+                    $modal.modal('show')
+                } catch (e) {
+                    bootbox.hideAll()
+                    bootbox.alert('加载失败：' + (e && e.message ? e.message : e))
+                }
+            },
+            ensureResourceEditor() {
+                if (this.cmEditor) {
+                    return
+                }
+                if (typeof CodeMirror === 'undefined') {
+                    return
+                }
+                const el = document.getElementById('k3sResourceEditor')
+                if (!el) {
+                    return
+                }
+                this.cmEditor = CodeMirror.fromTextArea(el, {
+                    mode: 'yaml',
+                    theme: 'eclipse',
+                    lineNumbers: true,
+                    lineWrapping: false,
+                    indentUnit: 2,
+                    tabSize: 2,
+                    styleActiveLine: true,
+                })
+                this.cmEditor.setSize('100%', '55vh')
+            },
+            async submitEditResource() {
+                if (this.cmSaving) {
+                    return
+                }
+                if (!this.cmEditor) {
+                    bootbox.alert('编辑器未初始化')
+                    return
+                }
+                const text = (this.cmEditor.getValue() || '').trim()
+                if (!text) {
+                    bootbox.alert('内容为空')
+                    return
+                }
+                try {
+                    this.cmSaving = true
+                    bootboxLoading('保存中...')
+                    const result = await axios.post('/api/k3s/apply', text, {
+                        headers: { 'Content-Type': 'text/plain' },
+                        transformRequest: [(d) => d],
+                    })
+                    bootbox.hideAll()
+                    this.cmSaving = false
+                    if (!result.data || result.data.code !== 0) {
+                        bootbox.alert('保存失败：' + ((result.data && result.data.message) || '未知错误'))
+                        return
+                    }
+                    const list = result.data.data || []
+                    const first = Array.isArray(list) && list.length ? list[0] : null
+                    if (first && first.action === 'error') {
+                        bootbox.alert('保存失败：' + (first.error || '未知错误'))
+                        return
+                    }
+                    this.saveReplaceRules()
+                    $('#k3sEditResourceModal').modal('hide')
+                    bootbox.alert('保存 + Apply 成功', async () => {
+                        await this.fetchList()
+                    })
+                } catch (e) {
+                    bootbox.hideAll()
+                    this.cmSaving = false
+                    bootbox.alert('保存失败：' + (e && e.message ? e.message : e))
+                }
+            }
+        }
+    }
+</script>

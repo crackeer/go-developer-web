@@ -1,0 +1,74 @@
+.link-list a {
+  display: inline-block;
+  margin: 0 10px;
+}
+
+textarea {
+  min-width: 100%;
+  max-width: 100%;
+}
+
+.red {
+  color: red;
+}
+
+a {
+  text-decoration: none !important;
+}
+
+.active {
+  font-size: 17px!important;
+  font-weight: bold!important;
+}
+
+.mr-10 {
+  margin-right: 10px;
+}
+
+.ml-10 {
+  margin-left: 10px;
+}
+
+.mr-20 {
+  margin-right: 20px;
+}
+
+.markdown-body img {
+  display: block;
+  margin: 10px auto;
+  border-style: groove;
+  border: 1px solid gray;
+  width: 40%;
+  height: 40%;
+}
+.modal-lg {
+  width: 80% !important;
+}
+thead {
+  position: sticky;
+  top: 0;
+  background: #f8f8f8;
+}
+.btn-group .btn {
+  margin-left: 6px !important;
+}
+
+.vip {
+  font-size: 18px !important;
+  color: rgb(234, 81, 81) !important;
+  font-weight: bold !important;
+}
+
+.glyphicon-refresh-animate {
+  -animation: spin 1s linear infinite;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
