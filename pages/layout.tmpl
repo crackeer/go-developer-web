@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1" />
-    <meta name="description" content="Description">
+    <meta name="description" content="{[{ .description }]}">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0">
     <title>{[{.title}]}</title>
     <meta name="viewport" content="width=device-width" />
@@ -30,6 +30,8 @@
     <script src="/assets/js/json-bigint-browser.min.js"></script>
     <script src="/assets/js/my.js"></script>
     <script type="text/javascript">
+        // 服务端页面数据（PageData.Extension），html/template 自动 JSON 编码并转义
+        window.PageData = {[{ .extension }]} || {}
         window.VueObject = null
         window.VueMount = "#app"
         window.Vm = null
@@ -51,12 +53,18 @@
     </script>
 </head>
 
-<body>
+<body style="padding: 20px 10% 0;">
 
-    {[{ if .title }]}
-    <p style="border-bottom: 1px solid gainsboro;padding-bottom: 10px;">
-        <strong style="font-size: 18px;">{[{.title}]}</strong>
-    </p>
+    {[{ if .breadcrumbs }]}
+    <ol class="breadcrumb">
+        {[{ range .breadcrumbs }]}
+        {[{ if .URL }]}
+        <li><a href="{[{ .URL }]}">{[{ .Name }]}</a></li>
+        {[{ else }]}
+        <li class="active">{[{ .Name }]}</li>
+        {[{ end }]}
+        {[{ end }]}
+    </ol>
     {[{ end }]}
     <div id="app"></div>
     {[{ yield }]}

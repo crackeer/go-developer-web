@@ -3,9 +3,10 @@
         <div class="form-group">
             <label class="col-sm-1 control-label">数据库：</label>
             <div class="col-sm-4">
-                <select class="form-control" v-model="database" @change="changeDatabase()">
-                    <option v-for="(item, i) in databases" :key="i" :value="item">{{item}}</option>
-                </select>
+                <p class="form-control-static">
+                    <strong>{{database || '-'}}</strong>
+                    <span class="text-muted" v-if="configName">（{{configName}}）</span>
+                </p>
             </div>
             <div class="col-sm-7 btn-group">
                 <button class="btn btn-info btn-sm" @click="showExecuteSQL">
@@ -18,7 +19,6 @@
                     下载sql
                 </button>
                 <button class="btn btn-info btn-sm" @click="showGlobalVariables">全局变量</button>
-                <button class="btn btn-info btn-sm" @click="reConnect">重连</button>
             </div>
         </div>
 
@@ -147,27 +147,6 @@
                 <div class="modal-footer">
                     <button type="button" class="btn btn-default" data-dismiss="modal">取消</button>
                     <button type="button" class="btn btn-primary" @click="execSQL">执行SQL</button>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <div class="modal fade" tabindex="-1" role="dialog" aria-labelledby="replaceModal" id="replaceModal">
-        <div class="modal-dialog" role="document">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h4 class="modal-title">请输入替换内容</h4>
-                </div>
-                <div class="modal-body">
-                    <strong>替换前的值:</strong>
-                    <input class="form-control" rows="5" v-model="oldData"></input>
-                    <strong>替换后的值:</strong>
-                    <input class="form-control" rows="5" v-model="newData"></input>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-default" data-dismiss="modal">取消</button>
-                    <button type="button" id="repaceSqlBtn" class="btn btn-primary" @click="execReplace"
-                        :disabled="isReplaceSQLBtn">执行SQL</button>
                 </div>
             </div>
         </div>
@@ -484,8 +463,10 @@
                 dir: '/',
                 page: 1,
                 page_size: PageSize,
-                database: '',
-                databases: [],
+                // 由服务端 page.MySQLData 注入
+                configId: String(window.PageData.config_id || ''),
+                configName: window.PageData.config_name || '',
+                database: window.PageData.database || '',
                 tables: [],
                 tables1: [],
                 table: '',
@@ -506,9 +487,6 @@
                 updateFields: {},
                 newIndexes: {},
                 alertSQLs: [],
-                oldData: "",
-                newData: "",
-                isReplaceSQLBtn: false,
                 descFields: [],
                 indexFields: [],
                 globalVars: [],
@@ -532,11 +510,9 @@
         },
         async mounted() {
             whereJsonEditor = initJSONEditor('where', {})
-            this.database = getQuery('database', '')
-            this.table = getQuery('table', 'project')
-            this.getDatabases()
+            this.table = getQuery('table', '')
             this.tables = await this.getTables()
-            if (this.tables.length > 0 && this.table.length < 1) {
+            if (this.tables.length > 0 && this.tables.indexOf(this.table) < 0) {
                 this.table = this.tables[0]
             }
             this.filterTable()
@@ -550,17 +526,16 @@
                 }
                 this.tables1 = this.tables.filter(t => t.indexOf(this.keyword) > -1)
             },
-            async getDatabases() {
-                let result = await axios.get('/api/mysql/database')
-                
-                this.databases = result.data.data.sort()
+            api(path) {
+                return '/api/mysql/' + this.configId + '/' + path
             },
             async getTables() {
-                if (this.database.length > 0) {
-                    let result = await axios.get('/api/mysql/table/' + this.database)
-                    return result.data.data.sort((a, b) => a - b)
+                let result = await axios.get(this.api('table'))
+                if (result.data.code != 0) {
+                    bootbox.alert(result.data.message)
+                    return []
                 }
-                return []
+                return (result.data.data || []).sort()
             },
             selectTable(t) {
                 this.table = t
@@ -568,44 +543,28 @@
                 this.searchTableData()
                 try {
                     pushStateWith({
-                        database: this.database,
                         table: this.table,
                     })
                 } catch (e) { }
-            },
-            async changeDatabase() {
-                this.tables = await this.getTables()
-                this.filterTable()
-                if (this.tables.length > 0) {
-                    this.table = this.tables[0]
-                }
-                this.page = 1
-                try {
-                    pushStateWith({
-                        database: this.database,
-                        table: this.table,
-                    })
-                } catch (e) { }
-                this.searchTableData()
             },
             async searchTableData() {
                 this.loading = true
                 this.totalPage = 0
                 this.tableData = []
-                let result0 = await axios.get('/api/mysql/desc/' + this.database + '/' + this.table)
+                let result0 = await axios.get(this.api('desc/' + this.table))
                 if (result0.data.code != 0) {
                     bootbox.alert(result0.data.message)
                     this.loading = false
                     return
                 }
                 this.tableFields = result0.data.data
-                let result = await axios.post('/api/mysql/query/' + this.database + '/' + this.table, {
+                let result = await axios.post(this.api('query/' + this.table), {
                     where: whereJsonEditor.get(),
                     page: this.page,
                     page_size: parseInt(this.page_size),
                 })
                 this.tableData = result.data.data
-                let result1 = await axios.post('/api/mysql/count/' + this.database + '/' + this.table, {
+                let result1 = await axios.post(this.api('count/' + this.table), {
                     where: whereJsonEditor.get(),
                 })
                 this.dataCount = result1.data.data.total
@@ -635,7 +594,7 @@
                         postData[this.tableFields[i].Field] = this.createData[this.tableFields[i].Field]
                     }
                 }
-                let result = await axios.post('/api/mysql/create/' + this.database + '/' + this.table, postData)
+                let result = await axios.post(this.api('create/' + this.table), postData)
                 if (result.data.code != 0) {
                     bootbox.alert(result.data.message)
                 } else {
@@ -647,7 +606,7 @@
             async updateRecord() {
                 let updateData = await this.formatRecord(this.record)
                 console.log(updateData)
-                let result = await axios.post('/api/mysql/update/' + this.database + '/' + this.table + "/" + this.record.id, updateData)
+                let result = await axios.post(this.api('update/' + this.table + '/' + this.record.id), updateData)
                 if (result.data.code != 0) {
                     bootbox.alert(result.data.message)
                 } else {
@@ -657,7 +616,7 @@
                 }
             },
             async formatRecord(data) {
-                let descResult = await axios.get('/api/mysql/desc/' + this.database + '/' + this.table)
+                let descResult = await axios.get(this.api('desc/' + this.table))
                 if (descResult.data.code != 0) {
                     console.log(descResult.data.message)
                     return data
@@ -682,29 +641,12 @@
                     if (!result) {
                         return
                     }
-                    let result1 = await axios.post('/api/mysql/exec_sql/' + this.database, {
-                        sql: base64Encode("delete from " + this.table + " where id = " + item.id),
-                    })
+                    let result1 = await axios.post(this.api('delete/' + this.table + '/' + item.id), {})
                     if (result1.data.code != 0) {
                         bootbox.alert(result1.data.message)
                     } else {
-                        bootbox.alert('修改成功', () => {
+                        bootbox.alert('删除成功', () => {
                             this.searchTableData()
-                        })
-                    }
-                })
-            },
-            reConnect() {
-                bootbox.confirm('确认重新连接MySQL', async (result) => {
-                    if (!result) {
-                        return
-                    }
-                    let result1 = await axios.get('/init')
-                    if (result1.data.code != 0) {
-                        bootbox.alert(result1.data.message)
-                    } else {
-                        bootbox.alert('重连成功，请重新登录', () => {
-                            windowReload()
                         })
                     }
                 })
@@ -720,11 +662,8 @@
             showExecuteSQL() {
                 $('#sqlModal').modal('show');
             },
-            showRepaceForm() {
-                $('#replaceModal').modal('show');
-            },
             async execSQL() {
-                let result1 = await axios.post('/api/mysql/exec_sql/' + this.database, {
+                let result1 = await axios.post(this.api('exec_sql'), {
                     sql: base64Encode(this.sql)
                 })
                 if (result1.data.code != 0) {
@@ -734,39 +673,8 @@
                 $('#sqlModal').modal('hide');
                 bootbox.alert('执行成功', this.searchTableData)
             },
-            async execReplace() {
-                this.isReplaceSQLBtn = true
-                let response = await axios.post('/api/mysql/replace', {
-                    old_data: this.oldData,
-                    new_data: this.newData,
-                })
-                this.isReplaceSQLBtn = false
-                console.log(response)
-                if (response.data.code != 0) {
-                    $('#replaceModal').modal('hide');
-                    bootbox.alert(response.data.message);
-                    return;
-                }
-                $('#replaceModal').modal('hide');
-                bootbox.alert('执行成功');
-            },
             showJSON(item) {
                 showJSONString(JSON.stringify(item))
-            },
-            async diffTables() {
-                let result = await httpGet(window.PageData["online_table_url"], {
-                    database: this.database,
-                })
-                if (result.code != 0) {
-                    bootbox.alert(result.message)
-                    return
-                }
-                let data = JSON.parse(result.data)
-                if (data.code != 0) {
-                    bootbox.alert(data.status)
-                    return
-                }
-                this.doTableDiff(data.data)
             },
             diffTableFields(current, online) {
                 let fieldMapping = {}
@@ -808,7 +716,7 @@
             async execAlterSQL() {
                 let errList = []
                 for (let i = 0; i < this.alertSQLs.length; i++) {
-                    let result = await axios.post('/api/mysql/exec_sql/' + this.database, {
+                    let result = await axios.post(this.api('exec_sql'), {
                         sql: base64Encode(this.alertSQLs[i]),
                     })
                     if (result.data.code != 0) {
@@ -862,7 +770,7 @@
                 let alterSQLs = [];
                 bootbox.alert("正在对比中，请稍后...")
                 for (let i = 0; i < tables.length; i++) {
-                    let local_result = await axios.get('/api/mysql/desc/' + this.database + '/' + tables[i])
+                    let local_result = await axios.get(this.api('desc/' + tables[i]))
                     if (local_result.data.code != 0) {
                         newTables[tables[i]] = data[tables[i]]
                     } else {
@@ -907,7 +815,7 @@
                 if (expected.length < 1) return []
                 let existing = {}
                 try {
-                    let result = await axios.get('/api/mysql/show_index/' + this.database + '/' + table)
+                    let result = await axios.get(this.api('show_index/' + table))
                     if (result.data.code == 0 && Array.isArray(result.data.data)) {
                         for (let i = 0; i < result.data.data.length; i++) {
                             let name = result.data.data[i].Key_name
@@ -930,7 +838,7 @@
                 let errList = []
                 let tables = Object.keys(this.newTables)
                 for (let i = 0; i < tables.length; i++) {
-                    let result = await axios.post('/api/mysql/exec_sql/' + this.database, {
+                    let result = await axios.post(this.api('exec_sql'), {
                         sql: base64Encode(this.newTables[tables[i]].sql),
                     })
                     if (result.data.code != 0) {
@@ -948,7 +856,7 @@
                     if (!result) {
                         return
                     }
-                    let result1 = await axios.post('/api/mysql/exec_sql/' + this.database, {
+                    let result1 = await axios.post(this.api('exec_sql'), {
                         sql: base64Encode("delete from " + this.table),
                     })
                     if (result1.data.code != 0) {
@@ -961,7 +869,7 @@
                 })
             },
             async showCreateTable() {
-                let result = await axios.get('/api/mysql/show_create_table/' + this.database + '/' + this.table)
+                let result = await axios.get(this.api('show_create_table/' + this.table))
                 if (result.data.code != 0) {
                     bootbox.alert(result.data.message)
                     return
@@ -970,7 +878,7 @@
                 showJSONString(sql)
             },
             async loadDescFields() {
-                let result = await axios.get('/api/mysql/desc/' + this.database + '/' + this.table)
+                let result = await axios.get(this.api('desc/' + this.table))
                 if (result.data.code != 0) {
                     bootbox.alert(result.data.message)
                     return false
@@ -984,7 +892,7 @@
                 }
             },
             async showIndex() {
-                let result = await axios.get('/api/mysql/show_index/' + this.database + '/' + this.table)
+                let result = await axios.get(this.api('show_index/' + this.table))
                 if (result.data.code != 0) {
                     bootbox.alert(result.data.message)
                     return
@@ -1024,7 +932,7 @@
                             return
                         }
                         // 获取完整的建表语句，保留字段原有的注释、默认值、字符集等属性
-                        let result = await axios.get('/api/mysql/show_create_table/' + this.database + '/' + this.table)
+                        let result = await axios.get(this.api('show_create_table/' + this.table))
                         if (result.data.code != 0) {
                             bootbox.alert(result.data.message)
                             return
@@ -1039,7 +947,7 @@
                         }
                         bootbox.confirm("将执行以下SQL：<textarea class='form-control' rows='3' readonly>" + alterSQL + "</textarea>", async (ok) => {
                             if (!ok) return
-                            let res = await axios.post('/api/mysql/exec_sql/' + this.database, {
+                            let res = await axios.post(this.api('exec_sql'), {
                                 sql: base64Encode(alterSQL),
                             })
                             if (res.data.code != 0) {
@@ -1054,10 +962,10 @@
                 })
             },
             async saveCreateTable() {
-                let sql = ['use ' + this.database]
+                let sql = ['use `' + this.database + '`']
                 bootboxLoading("正在导出表结构，请稍后...")
                 for (let i = 0; i < this.tables.length; i++) {
-                    let result = await axios.get('/api/mysql/show_create_table/' + this.database + '/' + this.tables[i])
+                    let result = await axios.get(this.api('show_create_table/' + this.tables[i]))
                     if (result.data.code == 0) {
                         sql.push(result.data.data.sql)
                     }
@@ -1073,7 +981,7 @@
                 let list = []
                 bootboxLoading("正在导出" + this.table + "表数据，请稍后...")
                 while (true) {
-                    let result = await axios.post('/api/mysql/query/' + this.database + '/' + this.table, {
+                    let result = await axios.post(this.api('query/' + this.table), {
                         page: page,
                         page_size: pageSize,
                     })
@@ -1100,7 +1008,7 @@
             async loadGlobalVariables() {
                 this.globalVarLoading = true
                 try {
-                    let result = await axios.get('/api/mysql/global_variables')
+                    let result = await axios.get(this.api('global_variables'))
                     if (result.data.code != 0) {
                         bootbox.alert('查询失败：' + result.data.message)
                         return

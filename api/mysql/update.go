@@ -12,7 +12,8 @@ import (
 func Update(ctx *gin.Context) {
 	updateData := api.AllPostParams(ctx)
 	table := ctx.Param("table")
-	id := ctx.Param("id")
+	// 路由组的 :id 为配置 ID，记录主键使用 :row_id
+	id := ctx.Param("row_id")
 
 	gormDB, err := GetDB(ctx)
 	if err != nil {

@@ -2,7 +2,6 @@ package resource
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/crackeer/go-developer-web/container"
@@ -25,10 +24,7 @@ const testTimeoutSeconds = 5
 
 // ConfigSecret 读取密码加密密钥。
 func ConfigSecret() string {
-	if v := strings.TrimSpace(os.Getenv("CONFIG_SECRET")); v != "" {
-		return v
-	}
-	return "devops-console-default-secret"
+	return container.ConfigSecret()
 }
 
 // FieldDef 类型扩展字段（extra JSON 内）的表单定义。
@@ -65,7 +61,7 @@ func TypeMetas() []TypeMeta {
 			RequireHost:     true,
 			DefaultPort:     3306,
 			ExtraFields: []FieldDef{
-				{Key: "database", Label: "数据库", Placeholder: "连接的库名（可选）"},
+				{Key: "database", Label: "数据库", Placeholder: "连接的库名", Required: true},
 			},
 		},
 		{
@@ -145,7 +141,6 @@ type SaveRequest struct {
 	Username string            `json:"username"`
 	Password string            `json:"password"`
 	Extra    map[string]string `json:"extra"`
-	Enabled  *int              `json:"enabled"`
 }
 
 // MaskedConfig 列表 / 详情的返回结构：密码不回传，仅提示是否已配置。
@@ -158,7 +153,6 @@ type MaskedConfig struct {
 	Username    string            `json:"username"`
 	HasPassword bool              `json:"has_password"`
 	Extra       map[string]string `json:"extra"`
-	Enabled     int               `json:"enabled"`
 	CreatedAt   string            `json:"created_at"`
 	UpdatedAt   string            `json:"updated_at"`
 }
@@ -178,7 +172,6 @@ func Mask(r container.Resource) MaskedConfig {
 		Username:    config.Username,
 		HasPassword: config.Password != "",
 		Extra:       config.Extra(),
-		Enabled:     config.Enabled,
 		CreatedAt:   r.CreateTimestamp.Format("2006-01-02 15:04:05"),
 		UpdatedAt:   r.UpdateTimestamp.Format("2006-01-02 15:04:05"),
 	}
@@ -218,21 +211,19 @@ func buildResource(req *SaveRequest) (*container.Resource, *container.Connection
 	if port <= 0 {
 		port = meta.DefaultPort
 	}
-	enabled := 1
-	if req.Enabled != nil {
-		enabled = *req.Enabled
-		if enabled != 0 {
-			enabled = 1
-		}
-	}
 	config := &container.ConnectionConfig{
 		Host:     host,
 		Port:     port,
 		Username: strings.TrimSpace(req.Username),
 		Password: req.Password,
-		Enabled:  enabled,
 	}
-	for key, value := range normalizeExtra(meta, req.Extra) {
+	extra := normalizeExtra(meta, req.Extra)
+	for _, field := range meta.ExtraFields {
+		if field.Required && extra[field.Key] == "" {
+			return nil, nil, fmt.Sprintf("%s is required", field.Key)
+		}
+	}
+	for key, value := range extra {
 		config.SetExtra(key, value)
 	}
 	return &container.Resource{Name: name, ConfigType: req.Type}, config, ""

@@ -95,14 +95,15 @@ func testByType(configType string, config *container.ConnectionConfig, password 
 
 // testMySQL 打开连接并 Ping。
 func testMySQL(ctx context.Context, config *container.ConnectionConfig, password string) error {
-	dsnConfig := mysql.Config{
-		User:   config.Username,
-		Passwd: password,
-		Net:    "tcp",
-		Addr:   fmt.Sprintf("%s:%d", config.Host, config.Port),
-		DBName: config.Database,
-		Params: map[string]string{"charset": "utf8mb4"},
-	}
+	// 必须用 NewConfig 取驱动默认值；直接写结构体字面量时 AllowNativePasswords 为 false，
+	// 会导致 mysql_native_password 账户报 "this user requires mysql native password authentication"。
+	dsnConfig := mysql.NewConfig()
+	dsnConfig.User = config.Username
+	dsnConfig.Passwd = password
+	dsnConfig.Net = "tcp"
+	dsnConfig.Addr = fmt.Sprintf("%s:%d", config.Host, config.Port)
+	dsnConfig.DBName = config.Database
+	dsnConfig.Params = map[string]string{"charset": "utf8mb4"}
 	db, err := sql.Open("mysql", dsnConfig.FormatDSN())
 	if err != nil {
 		return err

@@ -34,11 +34,11 @@ func OpenDB(path string) (*gorm.DB, error) {
 // ConnectionConfig 资源的连接参数，按 config_type 以 JSON 存入 Resource.Config。
 // 各类型只序列化自身需要的字段：
 //
-//	mysql: {"host":"10.0.0.1","port":3306,"username":"root","password":"<密文>","database":"db_name","enabled":1}
-//	ftp:   {"host":"10.0.0.1","port":21,"username":"ftp","password":"<密文>","prefix":"/data/ftp","enabled":1}
-//	ssh:   {"host":"10.0.0.1","port":22,"username":"root","password":"<密文>","enabled":1}
-//	s3:    {"host":"http://minio:9000","username":"AK","password":"<密文>","region":"us-east-1","bucket":"my-bucket","enabled":1}
-//	redis: {"host":"10.0.0.1","port":6379,"username":"","password":"<密文>","db":0,"enabled":1}
+//	mysql: {"host":"10.0.0.1","port":3306,"username":"root","password":"<密文>","database":"db_name"}
+//	ftp:   {"host":"10.0.0.1","port":21,"username":"ftp","password":"<密文>","prefix":"/data/ftp"}
+//	ssh:   {"host":"10.0.0.1","port":22,"username":"root","password":"<密文>"}
+//	s3:    {"host":"http://minio:9000","username":"AK","password":"<密文>","region":"us-east-1","bucket":"my-bucket"}
+//	redis: {"host":"10.0.0.1","port":6379,"username":"","password":"<密文>","db":0}
 type ConnectionConfig struct {
 	Host     string `json:"host"`
 	Port     int    `json:"port"`
@@ -49,7 +49,6 @@ type ConnectionConfig struct {
 	Region   string `json:"region,omitempty"`
 	Bucket   string `json:"bucket,omitempty"`
 	DB       int    `json:"db,omitempty"`
-	Enabled  int    `json:"enabled"`
 }
 
 // SetExtra 按类型扩展字段 key 写入连接参数。
@@ -181,7 +180,6 @@ type MySQLConfig struct {
 	Username string `json:"username"`
 	Password string `json:"password"` // 密文
 	Database string `json:"database,omitempty"`
-	Enabled  int    `json:"enabled"`
 }
 
 // FTPConfig FTP 连接配置（config_type=ftp 时的 Config JSON）。
@@ -191,7 +189,6 @@ type FTPConfig struct {
 	Username string `json:"username"`
 	Password string `json:"password"` // 密文
 	Prefix   string `json:"prefix,omitempty"`
-	Enabled  int    `json:"enabled"`
 }
 
 // SSHConfig SSH 连接配置（config_type=ssh 时的 Config JSON）。
@@ -200,7 +197,6 @@ type SSHConfig struct {
 	Port     int    `json:"port"`
 	Username string `json:"username"`
 	Password string `json:"password"` // 密文
-	Enabled  int    `json:"enabled"`
 }
 
 // S3Config S3 连接配置（config_type=s3 时的 Config JSON）。
@@ -219,7 +215,6 @@ type RedisConfig struct {
 	Username string `json:"username"`
 	Password string `json:"password"` // 密文
 	DB       int    `json:"db,omitempty"`
-	Enabled  int    `json:"enabled"`
 }
 
 // decodeConfig 将 resource.config 的 JSON 解析为指定类型的连接配置。
@@ -250,6 +245,23 @@ func QueryMySQLConfig(id int64) (*MySQLConfig, error) {
 		return nil, err
 	}
 	return decodeConfig[MySQLConfig](resource)
+}
+
+// QueryMySQLResource 按 ID 查询 MySQL 资源及其连接配置；不存在时返回 gorm.ErrRecordNotFound。
+func QueryMySQLResource(idStr string) (*Resource, *MySQLConfig, error) {
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		return nil, nil, gorm.ErrRecordNotFound
+	}
+	resource, err := queryResourceByID("mysql", id)
+	if err != nil {
+		return nil, nil, err
+	}
+	config, err := decodeConfig[MySQLConfig](resource)
+	if err != nil {
+		return nil, nil, err
+	}
+	return resource, config, nil
 }
 
 // QueryRedisConfig 按 ID 查询 Redis 连接配置。

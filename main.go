@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"net/http"
 
+	"github.com/crackeer/go-developer-web/api"
 	"github.com/crackeer/go-developer-web/api/file"
 	ftpAPI "github.com/crackeer/go-developer-web/api/ftp"
 	k3sHandler "github.com/crackeer/go-developer-web/api/k3s"
@@ -31,7 +32,11 @@ var (
 	renderClient *rollRender.Render
 )
 
-func newRenderClient(layout string) *rollRender.Render {
+func newRenderClient(layout string, isDevelop bool) *rollRender.Render {
+	var fileSystem rollRender.FileSystem = &rollRender.EmbedFileSystem{FS: tmplPage}
+	if isDevelop {
+		fileSystem = &rollRender.LocalFileSystem{}
+	}
 	object := rollRender.New(rollRender.Options{
 		Layout:     layout,
 		Directory:  "pages",
@@ -42,7 +47,7 @@ func newRenderClient(layout string) *rollRender.Render {
 		},
 		IsDevelopment:               true,
 		RenderPartialsWithoutPrefix: true,
-		FileSystem:                  &rollRender.EmbedFileSystem{FS: tmplPage},
+		FileSystem:                  fileSystem,
 	})
 	return object
 }
@@ -52,14 +57,19 @@ func main() {
 		panic(fmt.Sprintf("init app config error: %s", err.Error()))
 	}
 	appConfig := container.GetAppConfig()
-	renderClient = newRenderClient("layout")
+	isDevelop := appConfig.IsDevelop()
+	renderClient = newRenderClient("layout", isDevelop)
 	router := gin.Default()
 
-	assetsSub, err := fs.Sub(assets, "assets")
-	if err != nil {
-		panic(fmt.Sprintf("assets sub fs error: %s", err.Error()))
+	if isDevelop {
+		router.Static("/assets", "./assets")
+	} else {
+		assetsSub, err := fs.Sub(assets, "assets")
+		if err != nil {
+			panic(fmt.Sprintf("assets sub fs error: %s", err.Error()))
+		}
+		router.StaticFS("/assets", http.FS(assetsSub))
 	}
-	router.StaticFS("/assets", http.FS(assetsSub))
 	router.Use(gin.Recovery(), gin.Logger(), gin.BasicAuth(gin.Accounts{
 		"admin": appConfig.LoginPassword,
 	}))
@@ -84,14 +94,14 @@ func main() {
 	mysqlGroup.POST("query/:table", mysqlHandler.Query)
 	mysqlGroup.POST("count/:table", mysqlHandler.Count)
 	mysqlGroup.POST("group_by_count/:table", mysqlHandler.GroupByCount)
-	mysqlGroup.POST("update/:table/:id", mysqlHandler.Update)
+	mysqlGroup.POST("update/:table/:row_id", mysqlHandler.Update)
 	mysqlGroup.POST("create/:table", mysqlHandler.Create)
 	mysqlGroup.POST("batch_create/:table", mysqlHandler.BatchCreate)
 	mysqlGroup.GET("desc/:table", mysqlHandler.Desc)
 	mysqlGroup.GET("show_create_table/:table", mysqlHandler.ShowCreateTable)
-	mysqlGroup.GET("show_index", mysqlHandler.ShowIndex)
+	mysqlGroup.GET("show_index/:table", mysqlHandler.ShowIndex)
 	mysqlGroup.POST("distinct/:column", mysqlHandler.Distinct)
-	mysqlGroup.POST("delete/:id", mysqlHandler.DeleteByID)
+	mysqlGroup.POST("delete/:table/:row_id", mysqlHandler.DeleteByID)
 	mysqlGroup.GET("table", mysqlHandler.Table)
 	mysqlGroup.POST("exec_sql", mysqlHandler.ExecSQL)
 	mysqlGroup.GET("global_variables", mysqlHandler.GlobalVariables)
@@ -161,17 +171,71 @@ func main() {
 	configGroup.POST("delete/:id", resource.Delete)
 	configGroup.POST("test/:id", resource.Test)
 
-	router.GET("/mysql/:id", createPageHandler("service/mysql"))
-	router.GET("/ftp/:id", createPageHandler("service/ftp"))
-	router.GET("/ssh/:id", createPageHandler("service/ssh"))
-	router.GET("/s3/:id", createPageHandler("service/s3"))
-	router.GET("/redis/:id", createPageHandler("service/redis"))
-	router.NoRoute(createPageHandler("index"))
+	router.GET("/mysql/:id", createPageHandlerV1("mysql/index", mysqlHandler.PageData))
+	router.GET("/ftp/:id", createPageHandlerV1("service/ftp", nil))
+	router.GET("/ssh/:id", createPageHandlerV1("service/ssh", nil))
+	router.GET("/s3/:id", createPageHandlerV1("service/s3", nil))
+	router.GET("/redis/:id", createPageHandlerV1("service/redis", nil))
+	router.GET("tool/json", createPageHandlerV2("tool/json", &api.PageData{
+		Title:       "JSON 工具",
+		Description: "JSON 工具",
+	}))
+	router.NoRoute(createPageHandlerV2("index", &api.PageData{
+		Title:           "首页",
+		Description:     "页面不存在",
+		HideBreadcrumbs: true,
+	}))
 	router.Run(fmt.Sprintf(":%d", appConfig.Port))
 }
 
-func createPageHandler(page string) gin.HandlerFunc {
+func createPageHandlerV2(page string, pageData *api.PageData) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		renderClient.HTML(ctx.Writer, http.StatusOK, page, nil)
+		renderClient.HTML(ctx.Writer, http.StatusOK, page, pageBinding(pageData, nil))
 	}
+}
+
+// createPageHandler 渲染页面；dataFunc 可为 nil，返回 error 时用 layout 渲染错误页。
+func createPageHandlerV1(page string, dataFunc api.DataFunc) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		data := &api.PageData{}
+		if dataFunc != nil {
+			result, err := dataFunc(ctx)
+			if err != nil {
+				renderClient.HTML(ctx.Writer, http.StatusOK, "error", pageBinding(&api.PageData{Title: "出错了"}, err))
+				return
+			}
+			if result != nil {
+				data = result
+			}
+		}
+		renderClient.HTML(ctx.Writer, http.StatusOK, page, pageBinding(data, nil))
+	}
+}
+
+// pageBinding 转为模板变量；面包屑首项固定为首页，extension 由 html/template 在 <script> 中自动 JSON 编码。
+func pageBinding(data *api.PageData, err error) map[string]interface{} {
+	breadcrumbs := data.Breadcrumbs
+	if len(breadcrumbs) < 1 && data.Title != "" {
+		breadcrumbs = []api.Breadcrumb{{Name: data.Title}}
+	}
+	if len(breadcrumbs) > 0 {
+		breadcrumbs = append([]api.Breadcrumb{{Name: "首页", URL: "/"}}, breadcrumbs...)
+	}
+
+	extension := data.Extension
+	if extension == nil {
+		extension = map[string]interface{}{}
+	}
+	binding := map[string]interface{}{
+		"title":       data.Title,
+		"description": data.Description,
+		"extension":   extension,
+	}
+	if !data.HideBreadcrumbs {
+		binding["breadcrumbs"] = breadcrumbs
+	}
+	if err != nil {
+		binding["error"] = err.Error()
+	}
+	return binding
 }

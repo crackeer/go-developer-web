@@ -13,9 +13,15 @@ var appConfig *AppConfig
 var sqliteDB *gorm.DB
 
 type AppConfig struct {
-	Port          int64  `json:"port" env:"PORT" default:"8080"`
+	Port          int64  `json:"port" env:"PORT" envDefault:"8080"`
 	LoginPassword string `json:"loginPassword" env:"LOGIN_PASSWORD"`
-	SQLitePath    string `json:"sqlitePath" env:"SQLITE_PATH" default:"./devops-console.db"`
+	SQLitePath    string `json:"sqlitePath" env:"SQLITE_PATH" envDefault:"./devops-console.db"`
+	Env           string `json:"env" env:"ENV"`
+}
+
+// IsDevelop 是否为开发环境（ENV=develop），开发环境下页面模板与静态资源直接读取本地文件。
+func (c *AppConfig) IsDevelop() bool {
+	return c.Env == "develop"
 }
 
 func InitAppConfig() error {

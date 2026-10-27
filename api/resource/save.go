@@ -107,6 +107,7 @@ func Update(ctx *gin.Context) {
 		api.Failure(ctx, -1, friendlyDbError(err))
 		return
 	}
+	container.ClearClientCache(id)
 	updated, err := container.GetResource(conn, id)
 	if err != nil {
 		api.Failure(ctx, -1, err.Error())
@@ -134,6 +135,7 @@ func Delete(ctx *gin.Context) {
 		api.Failure(ctx, -1, "config not found")
 		return
 	}
+	container.ClearClientCache(ctx.Param("id"))
 	api.Success(ctx, nil)
 }
 

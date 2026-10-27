@@ -1,0 +1,215 @@
+<template id="template">
+    <div id="jsoneditor" style="width: 100%; height: calc(100vh - 150px);"></div>
+    <input type="file" ref="fileInput" accept=".json,application/json,text/plain" style="display:none;"
+        @change="onFileChosen" />
+    <div id="btn-group-div" role="group" aria-label="JSON 操作">
+        <button type="button" @click="loadFromFile" class="btn btn-primary">加载JSON文件</button>
+        <button type="button" @click="saveJSON" class="btn btn-primary">保存到文件</button>
+        <button type="button" @click="json2Go" class="btn btn-primary">转GoStruct</button>
+        <button type="button" @click="json2String" class="btn btn-primary">转字符串</button>
+        <button type="button" @click="revertJSON2String" class="btn btn-primary">反转字符串</button>
+        <button type="button" @click="deepParse" class="btn btn-primary">递归解析</button>
+        <button type="button" @click="copyToClipboard" class="btn btn-primary">复制到剪贴板</button>
+        <button type="button" @click="clearJSON" class="btn btn-primary">清空</button>
+    </div>
+</template>
+<script src="/assets/js/json-to-go.js"></script>
+<script>
+    const JSON_STORAGE_KEY = "json-editor"
+    // 编辑器实例放在 Vue 响应式数据之外，避免被 Proxy 包装
+    let jsonEditor = null
+
+    function getInitJSON() {
+        try {
+            return JSON.parse(localStorage.getItem(JSON_STORAGE_KEY) || '{}')
+        } catch (e) {
+            return {}
+        }
+    }
+
+    function storeJSON(value) {
+        try {
+            localStorage.setItem(JSON_STORAGE_KEY, JSON.stringify(value))
+        } catch (e) { }
+    }
+
+    function escapeHTML(text) {
+        return String(text)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;')
+    }
+
+    window.VueObject = {
+        template: '#template',
+        mounted() {
+            this.initEditor()
+        },
+        methods: {
+            initEditor() {
+                const container = document.getElementById("jsoneditor")
+                const options = {
+                    mode: "code",
+                    modes: ["code", "tree", "view", "text"],
+                    search: true,
+                    indentation: 4,
+                    onChangeText: (text) => {
+                        try {
+                            JSON.parse(text)
+                            localStorage.setItem(JSON_STORAGE_KEY, text)
+                        } catch (e) { }
+                    }
+                }
+                jsonEditor = new JSONEditor(container, options, getInitJSON())
+            },
+            // 读取当前内容，非法 JSON 时提示并返回 undefined
+            getCurrent() {
+                try {
+                    return jsonEditor.get()
+                } catch (e) {
+                    bootbox.alert("JSON格式错误！")
+                    return undefined
+                }
+            },
+            setCurrent(value) {
+                jsonEditor.set(value)
+                storeJSON(value)
+            },
+            saveJSON() {
+                const current = this.getCurrent()
+                if (current === undefined) return
+                bootbox.prompt("请输入文件名", (fname) => {
+                    if (fname == null || fname.trim() === '') return true
+                    fname = fname.trim()
+                    if (!/\.json$/i.test(fname)) {
+                        fname = fname.replace(/\.[^.]*$/, '') + ".json"
+                    }
+                    saveFile(JSON.stringify(current, null, 4), fname)
+                })
+            },
+            json2Go() {
+                const current = this.getCurrent()
+                if (current === undefined) return
+                const result = jsonToGo(JSON.stringify(current), null, false, false)
+                if (result.error) {
+                    bootbox.alert("转换失败：" + escapeHTML(result.error))
+                    return
+                }
+                bootbox.dialog({
+                    title: '转换结果',
+                    message: '<textarea class="form-control" rows="20" style="font-family: monospace;" readonly>'
+                        + escapeHTML(result.go) + '</textarea>',
+                    closeButton: true,
+                    size: 'large',
+                    onEscape: true,
+                    buttons: {
+                        copy: {
+                            label: '复制',
+                            className: 'btn-primary',
+                            callback: () => {
+                                this.writeClipboard(result.go)
+                                return false
+                            }
+                        }
+                    }
+                })
+            },
+            json2String() {
+                const current = this.getCurrent()
+                if (current === undefined) return
+                this.setCurrent(JSON.stringify(current))
+            },
+            revertJSON2String() {
+                const current = this.getCurrent()
+                if (current === undefined) return
+                if (typeof current !== 'string') {
+                    bootbox.alert("当前内容不是 JSON 字符串！")
+                    return
+                }
+                try {
+                    this.setCurrent(JSON.parse(current))
+                } catch (e) {
+                    bootbox.alert("JSON格式错误！")
+                }
+            },
+            clearJSON() {
+                this.setCurrent({})
+            },
+            loadFromFile() {
+                const input = this.$refs.fileInput
+                if (!input) return
+                input.value = ''
+                input.click()
+            },
+            onFileChosen(e) {
+                const file = e.target.files && e.target.files[0]
+                if (!file) return
+                const reader = new FileReader()
+                reader.onload = () => {
+                    try {
+                        this.setCurrent(JSON.parse(reader.result + ''))
+                    } catch (err) {
+                        bootbox.alert('JSON 解析失败：' + escapeHTML(err && err.message ? err.message : err))
+                    }
+                }
+                reader.onerror = () => bootbox.alert('读取文件失败')
+                reader.readAsText(file)
+            },
+            writeClipboard(text) {
+                navigator.clipboard.writeText(text)
+                    .then(() => bootbox.alert("复制成功！"))
+                    .catch(err => {
+                        console.error('Could not copy text: ', err)
+                        bootbox.alert("复制失败，请检查剪贴板权限")
+                    })
+            },
+            copyToClipboard() {
+                const current = this.getCurrent()
+                if (current === undefined) return
+                this.writeClipboard(JSON.stringify(current))
+            },
+            // 递归把字符串形式的 JSON 对象/数组展开
+            deepParse() {
+                const current = this.getCurrent()
+                if (current === undefined) return
+                const MAX_DEPTH = 32
+                const walk = (value, depth) => {
+                    if (depth > MAX_DEPTH) return value
+                    if (typeof value === 'string') {
+                        const trimmed = value.trim()
+                        if (trimmed.length >= 2 && (trimmed[0] === '{' || trimmed[0] === '[')) {
+                            try {
+                                return walk(JSON.parse(trimmed), depth + 1)
+                            } catch (e) {
+                                return value
+                            }
+                        }
+                        return value
+                    }
+                    if (Array.isArray(value)) {
+                        return value.map(v => walk(v, depth + 1))
+                    }
+                    if (value && typeof value === 'object') {
+                        for (const k of Object.keys(value)) {
+                            value[k] = walk(value[k], depth + 1)
+                        }
+                    }
+                    return value
+                }
+                this.setCurrent(walk(current, 0))
+            }
+        }
+    }
+</script>
+<style>
+    #btn-group-div {
+        text-align: center;
+        margin-top: 10px;
+    }
+
+    #btn-group-div .btn {
+        margin: 4px 5px;
+    }
+</style>

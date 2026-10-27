@@ -18,9 +18,10 @@ func DeleteByID(ctx *gin.Context) {
 		api.Failure(ctx, -1, err.Error())
 		return
 	}
-	id := ctx.Param("id")
+	// 路由组的 :id 为配置 ID，记录主键使用 :row_id
+	id := ctx.Param("row_id")
 
-	if err := gormDB.Exec(fmt.Sprintf("delete from %s where id = %s", table, id)).Error; err != nil {
+	if err := gormDB.Exec(fmt.Sprintf("delete from `%s` where id = ?", table), id).Error; err != nil {
 		api.Failure(ctx, -1, "delete error")
 		return
 	}
