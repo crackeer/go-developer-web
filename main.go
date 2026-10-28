@@ -8,6 +8,7 @@ import (
 
 	"github.com/crackeer/go-developer-web/api"
 	"github.com/crackeer/go-developer-web/api/file"
+	fsAPI "github.com/crackeer/go-developer-web/api/fs"
 	ftpAPI "github.com/crackeer/go-developer-web/api/ftp"
 	k3sHandler "github.com/crackeer/go-developer-web/api/k3s"
 	mysqlHandler "github.com/crackeer/go-developer-web/api/mysql"
@@ -162,6 +163,17 @@ func main() {
 	s3Router.GET("object/stat", s3client.Stat)
 	s3Router.GET("token", s3client.Token)
 
+	// 本地文件（config_type=fs），路径均相对资源配置的根目录
+	fsRouter := router.Group("/api/fs/:id")
+	fsRouter.GET("list", fsAPI.List)
+	fsRouter.GET("download", fsAPI.Download)
+	fsRouter.POST("upload", fsAPI.Upload)
+	fsRouter.POST("delete", fsAPI.Delete)
+	fsRouter.POST("rename", fsAPI.Rename)
+	fsRouter.POST("mkdir", fsAPI.Mkdir)
+	fsRouter.POST("zip", fsAPI.Zip)
+	fsRouter.POST("unzip", fsAPI.Unzip)
+
 	// 资源配置管理（MySQL / FTP / SSH / S3 / Redis，SQLite 存储）
 	configGroup := router.Group("/api/config")
 	configGroup.GET("types", resource.Types)
@@ -172,6 +184,7 @@ func main() {
 	configGroup.POST("test/:id", resource.Test)
 
 	router.GET("/mysql/:id", createPageHandlerV1("mysql/index", mysqlHandler.PageData))
+	router.GET("/fs/:id", createPageHandlerV1("fs/index", fsAPI.PageData))
 	router.GET("/ftp/:id", createPageHandlerV1("service/ftp", nil))
 	router.GET("/ssh/:id", createPageHandlerV1("service/ssh", nil))
 	router.GET("/s3/:id", createPageHandlerV1("service/s3", nil))
@@ -179,6 +192,14 @@ func main() {
 	router.GET("tool/json", createPageHandlerV2("tool/json", &api.PageData{
 		Title:       "JSON 工具",
 		Description: "JSON 工具",
+	}))
+	router.GET("tool/qrcode", createPageHandlerV2("tool/qrcode", &api.PageData{
+		Title:       "二维码生成",
+		Description: "二维码生成",
+	}))
+	router.GET("tool/jsrun", createPageHandlerV2("tool/jsrun", &api.PageData{
+		Title:       "运行 JS 代码",
+		Description: "运行 JS 代码",
 	}))
 	router.NoRoute(createPageHandlerV2("index", &api.PageData{
 		Title:           "首页",

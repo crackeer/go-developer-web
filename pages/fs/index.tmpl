@@ -1,0 +1,266 @@
+<template id="template">
+    <div>
+        <!-- 当前路径（相对根目录），逐级可点击 -->
+        <div class="well well-sm" style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+            <span>
+                <strong>{{configName}}</strong>
+                <span class="text-muted">（根目录：{{rootDir}}）</span>
+            </span>
+            <ol class="breadcrumb" style="margin: 0; padding: 0; background: none;">
+                <li v-for="(seg, i) in pathSegments" :key="seg.path" :class="{ active: i === pathSegments.length - 1 }">
+                    <a v-if="i < pathSegments.length - 1" href="javascript:void(0)" @click="goPath(seg.path)">{{seg.name}}</a>
+                    <span v-else>{{seg.name}}</span>
+                </li>
+            </ol>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 10px;">
+            <span>共 {{fileList.length}} 项<template v-if="keyword">，匹配 {{displayFileList.length}} 项</template></span>
+            <label class="btn btn-sm btn-primary" style="margin: 0;">
+                上传文件<input type="file" multiple @change="uploadFile" style="display: none;" />
+            </label>
+            <button class="btn btn-sm btn-default" @click="showCreateDir">新建文件夹</button>
+            <button class="btn btn-sm btn-default" @click="getFileList" :disabled="loading">
+                <span class="glyphicon glyphicon-refresh"></span> 刷新
+            </button>
+            <input type="text" class="form-control input-sm" v-model="keyword" placeholder="搜索文件/文件夹"
+                aria-label="搜索文件/文件夹" style="width: 200px; margin-left: auto;" />
+        </div>
+
+        <div class="table-responsive">
+            <table class="table table-bordered table-condensed table-hover">
+                <thead>
+                    <tr>
+                        <th>名字</th>
+                        <th style="width: 120px;">大小</th>
+                        <th style="width: 170px;">修改时间</th>
+                        <th style="width: 280px;">操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr v-if="path !== '/'">
+                        <td><a href="javascript:void(0)" @click="goUpper">..</a></td>
+                        <td></td>
+                        <td></td>
+                        <td><button class="btn btn-xs btn-link" @click="goUpper">上一级</button></td>
+                    </tr>
+                    <tr v-for="item in displayFileList" :key="item.path">
+                        <td style="word-break: break-all;">
+                            <a v-if="item.is_dir" href="javascript:void(0)" @click="goPath(item.path)">
+                                <span class="glyphicon glyphicon-folder-close"></span> {{item.name}}
+                            </a>
+                            <span v-else><span class="glyphicon glyphicon-file"></span> {{item.name}}</span>
+                        </td>
+                        <td>{{item.is_dir ? '-' : formatSize(item.size)}}</td>
+                        <td>{{item.modify}}</td>
+                        <td>
+                            <button class="btn btn-xs btn-link" @click="download(item)" v-if="!item.is_dir">下载</button>
+                            <button class="btn btn-xs btn-link" @click="zipFile(item)" v-if="item.is_dir">zip压缩</button>
+                            <button class="btn btn-xs btn-link" @click="unzipFile(item)"
+                                v-if="!item.is_dir && item.name.toLowerCase().endsWith('.zip')">unzip解压</button>
+                            <button class="btn btn-xs btn-link" @click="rename(item)">重命名</button>
+                            <button class="btn btn-xs btn-link text-danger" @click="handleDelete(item)">删除</button>
+                        </td>
+                    </tr>
+                    <tr v-if="displayFileList.length < 1">
+                        <td colspan="4" style="text-align: center; color: #999;">{{loading ? '加载中...' : '空目录'}}</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="modal fade" id="uploadModal" tabindex="-1" role="dialog" aria-labelledby="uploadModalLabel"
+            data-backdrop="static">
+            <div class="modal-dialog" role="document">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span
+                                aria-hidden="true">&times;</span></button>
+                        <h4 class="modal-title" id="uploadModalLabel">上传进度</h4>
+                    </div>
+                    <div class="modal-body">
+                        <p>共 {{ uploadList.length }} 个文件，已完成 {{ uploadedFiles }} 个</p>
+                        <div v-for="(item, index) in uploadList" :key="index" style="margin-bottom: 12px;">
+                            <p style="margin-bottom: 4px; word-break: break-all;">
+                                {{ item.name }}
+                                <span v-if="item.status === 'error'" class="text-danger">上传失败：{{ item.errorMsg }}</span>
+                                <span v-else-if="item.status === 'done'" class="text-success">完成</span>
+                                <span v-else>{{ item.progress }}%</span>
+                            </p>
+                            <div class="progress" style="margin-bottom: 0;">
+                                <div class="progress-bar"
+                                    :class="item.status === 'error' ? 'progress-bar-danger' : 'progress-bar-success'"
+                                    role="progressbar" :aria-valuenow="item.progress" aria-valuemin="0"
+                                    aria-valuemax="100" :style="{ width: item.progress + '%' }">
+                                    <span class="sr-only">{{ item.progress }}% 完成</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</template>
+<script>
+    // 父目录：/a/b -> /a，/a -> /
+    function parentPath(path) {
+        let parts = path.split('/').filter(Boolean)
+        parts.pop()
+        return '/' + parts.join('/')
+    }
+
+    window.VueObject = {
+        template: '#template',
+        data() {
+            return {
+                configId: window.PageData.config_id,
+                configName: window.PageData.config_name || '',
+                rootDir: window.PageData.root_dir || '',
+                path: '/',
+                fileList: [],
+                keyword: '',
+                loading: false,
+                uploadList: [],
+            }
+        },
+        computed: {
+            apiBase() {
+                return '/api/fs/' + this.configId
+            },
+            pathSegments() {
+                let segments = [{ name: '根目录', path: '/' }]
+                let current = ''
+                for (const name of this.path.split('/').filter(Boolean)) {
+                    current += '/' + name
+                    segments.push({ name: name, path: current })
+                }
+                return segments
+            },
+            displayFileList() {
+                let keyword = this.keyword.trim().toLowerCase()
+                if (!keyword) return this.fileList
+                return this.fileList.filter(item => item.name.toLowerCase().indexOf(keyword) >= 0)
+            },
+            uploadedFiles() {
+                return this.uploadList.filter(item => item.status === 'done').length
+            },
+        },
+        async mounted() {
+            this.path = getQuery('path', '/')
+            // 浏览器前进 / 后退时同步目录
+            window.addEventListener('popstate', () => {
+                this.path = getQuery('path', '/')
+                this.getFileList()
+            })
+            await this.getFileList()
+        },
+        methods: {
+            formatSize(size) {
+                return filesize(size || 0, { standard: 'jedec' })
+            },
+            // 统一处理接口响应：失败时弹窗并返回 null
+            async request(promise) {
+                try {
+                    const resp = await promise
+                    if (!resp.data || resp.data.code !== 0) {
+                        bootbox.alert((resp.data && resp.data.message) || '请求失败')
+                        return null
+                    }
+                    return resp.data
+                } catch (e) {
+                    bootbox.alert('请求失败：' + e.message)
+                    return null
+                }
+            },
+            async getFileList() {
+                this.loading = true
+                const result = await this.request(axios.get(this.apiBase + '/list', { params: { path: this.path } }))
+                this.loading = false
+                if (!result) return
+                this.path = result.data.path
+                this.fileList = result.data.list || []
+            },
+            goPath(path) {
+                this.path = path
+                this.keyword = ''
+                history.pushState(null, '', window.location.pathname + '?path=' + encodeURIComponent(path))
+                this.getFileList()
+            },
+            goUpper() {
+                this.goPath(parentPath(this.path))
+            },
+            download(item) {
+                window.open(this.apiBase + '/download?path=' + encodeURIComponent(item.path), '_blank')
+            },
+            async uploadFile(event) {
+                const files = Array.from(event.target.files || [])
+                event.target.value = ''
+                if (files.length < 1) return
+                this.uploadList = files.map(file => ({ name: file.name, progress: 0, status: '', errorMsg: '' }))
+                $('#uploadModal').modal('show')
+                for (let i = 0; i < files.length; i++) {
+                    const formData = new FormData()
+                    formData.append('file', files[i])
+                    try {
+                        const resp = await axios.post(this.apiBase + '/upload', formData, {
+                            params: { path: this.path },
+                            onUploadProgress: (e) => {
+                                if (e.total) this.uploadList[i].progress = Math.round(e.loaded / e.total * 100)
+                            },
+                        })
+                        if (!resp.data || resp.data.code !== 0) {
+                            throw new Error((resp.data && resp.data.message) || '上传失败')
+                        }
+                        this.uploadList[i].progress = 100
+                        this.uploadList[i].status = 'done'
+                    } catch (e) {
+                        this.uploadList[i].status = 'error'
+                        this.uploadList[i].errorMsg = (e.response && e.response.data && e.response.data.message) || e.message
+                    }
+                }
+                this.getFileList()
+            },
+            showCreateDir() {
+                bootbox.prompt('请输入文件夹名字', async (name) => {
+                    if (!name || !name.trim()) return
+                    const result = await this.request(axios.post(this.apiBase + '/mkdir', { path: this.path, name: name.trim() }))
+                    if (result) this.getFileList()
+                })
+            },
+            rename(item) {
+                bootbox.prompt({
+                    title: '重命名：' + item.name,
+                    value: item.name,
+                    callback: async (name) => {
+                        if (!name || !name.trim() || name.trim() === item.name) return
+                        const result = await this.request(axios.post(this.apiBase + '/rename', { path: item.path, name: name.trim() }))
+                        if (result) this.getFileList()
+                    },
+                })
+            },
+            handleDelete(item) {
+                const tip = item.is_dir ? '确认删除文件夹「' + item.name + '」及其全部内容？无法恢复' : '确认删除文件「' + item.name + '」？无法恢复'
+                bootbox.confirm(tip, async (yes) => {
+                    if (!yes) return
+                    const result = await this.request(axios.post(this.apiBase + '/delete', { path: item.path }))
+                    if (result) this.getFileList()
+                })
+            },
+            zipFile(item) {
+                bootbox.confirm('确认 zip 压缩该文件夹么？请保证有足够空间', async (yes) => {
+                    if (!yes) return
+                    const result = await this.request(axios.post(this.apiBase + '/zip', { path: item.path }))
+                    if (result) bootbox.alert('后台打包中，文件为：' + result.data.dest + '，稍后刷新查看')
+                })
+            },
+            unzipFile(item) {
+                bootbox.confirm('确认 unzip 解压该文件么？请保证有足够空间', async (yes) => {
+                    if (!yes) return
+                    const result = await this.request(axios.post(this.apiBase + '/unzip', { path: item.path }))
+                    if (result) bootbox.alert('后台解压中，目标文件夹为：' + result.data.dest + '，稍后刷新查看')
+                })
+            },
+        },
+    }
+</script>

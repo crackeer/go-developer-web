@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/crackeer/go-developer-web/container"
@@ -88,6 +89,8 @@ func testByType(configType string, config *container.ConnectionConfig, password 
 		return testS3(timeoutCtx, config, password)
 	case TypeRedis:
 		return testRedis(timeoutCtx, config, password)
+	case TypeFS:
+		return testFS(config)
 	default:
 		return fmt.Errorf("unsupported type: %s", configType)
 	}
@@ -158,6 +161,20 @@ func testS3(ctx context.Context, config *container.ConnectionConfig, password st
 	}
 	client := s3.NewFromConfig(*cfg)
 	_, err := client.ListBuckets(ctx, &s3.ListBucketsInput{})
+	return err
+}
+
+// testRedis 建立连接并 PING。
+// testFS 检查根目录存在且可读取。
+func testFS(config *container.ConnectionConfig) error {
+	stat, err := os.Stat(config.Host)
+	if err != nil {
+		return err
+	}
+	if !stat.IsDir() {
+		return fmt.Errorf("%s 不是目录", config.Host)
+	}
+	_, err = os.ReadDir(config.Host)
 	return err
 }
 

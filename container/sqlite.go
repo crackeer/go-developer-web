@@ -39,6 +39,7 @@ func OpenDB(path string) (*gorm.DB, error) {
 //	ssh:   {"host":"10.0.0.1","port":22,"username":"root","password":"<密文>"}
 //	s3:    {"host":"http://minio:9000","username":"AK","password":"<密文>","region":"us-east-1","bucket":"my-bucket"}
 //	redis: {"host":"10.0.0.1","port":6379,"username":"","password":"<密文>","db":0}
+//	fs:    {"host":"/data/www"}（host 存放服务器上的根目录绝对路径）
 type ConnectionConfig struct {
 	Host     string `json:"host"`
 	Port     int    `json:"port"`
@@ -217,6 +218,11 @@ type RedisConfig struct {
 	DB       int    `json:"db,omitempty"`
 }
 
+// FSConfig 本地文件配置（config_type=fs 时的 Config JSON），根目录复用 host 字段。
+type FSConfig struct {
+	RootDir string `json:"host"`
+}
+
 // decodeConfig 将 resource.config 的 JSON 解析为指定类型的连接配置。
 func decodeConfig[T any](resource *Resource) (*T, error) {
 	config := new(T)
@@ -271,6 +277,23 @@ func QueryRedisConfig(id int64) (*RedisConfig, error) {
 		return nil, err
 	}
 	return decodeConfig[RedisConfig](resource)
+}
+
+// QueryFSResource 按 ID 查询本地文件资源及其根目录配置；不存在时返回 gorm.ErrRecordNotFound。
+func QueryFSResource(idStr string) (*Resource, *FSConfig, error) {
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		return nil, nil, gorm.ErrRecordNotFound
+	}
+	resource, err := queryResourceByID("fs", id)
+	if err != nil {
+		return nil, nil, err
+	}
+	config, err := decodeConfig[FSConfig](resource)
+	if err != nil {
+		return nil, nil, err
+	}
+	return resource, config, nil
 }
 
 // QueryFTPConfig 按 ID 查询 FTP 连接配置。

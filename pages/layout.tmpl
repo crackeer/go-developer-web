@@ -46,7 +46,10 @@
         }
         document.addEventListener("DOMContentLoaded", async () => {
             setTimeout(() => {
-                window.Vm = mountVueObject(window.VueObject, window.VueMount)
+                // 纯静态页面（如运行 JS）不定义 VueObject，无需挂载
+                if (window.VueObject != null) {
+                    window.Vm = mountVueObject(window.VueObject, window.VueMount)
+                }
             },500)
             
         }, false);

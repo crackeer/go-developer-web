@@ -1,0 +1,39 @@
+<template id="template">
+    <div class="row">
+        <div class="col-md-12">
+            <textarea class="form-control" rows="4" placeholder="输入要生成二维码的文本或链接" v-model="value"
+                @input="convert"></textarea>
+        </div>
+    </div>
+    <div id="qrcode" style="margin: 20px auto; display: flex; justify-content: center;"></div>
+</template>
+<script>
+    // QRCode 实例放在 Vue 响应式数据之外，避免被 Proxy 包装
+    let qrcode = null
+    window.VueObject = {
+        data() {
+            return {
+                value: 'http://baidu.com',
+            }
+        },
+        template: '#template',
+        mounted() {
+            qrcode = new QRCode("qrcode", {
+                text: this.value,
+                width: 328,
+                height: 328,
+                colorDark: "#000000",
+                colorLight: "#ffffff",
+                correctLevel: QRCode.CorrectLevel.H
+            })
+        },
+        methods: {
+            convert() {
+                qrcode.clear()
+                if (this.value) {
+                    qrcode.makeCode(this.value)
+                }
+            }
+        }
+    }
+</script>

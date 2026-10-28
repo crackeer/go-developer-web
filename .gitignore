@@ -4,6 +4,7 @@
 
 # SQLite 本地数据（资源配置管理）
 /data/
+/devops-console.db
 
 # 本地配置（含密钥，切勿提交）
 .env

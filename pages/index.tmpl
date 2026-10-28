@@ -2,7 +2,7 @@
     <div>
         <!-- 大标题 -->
         <div class="page-header">
-            <h2>MySQL / FTP / OSS / SSH / Redis</h2>
+            <h2>MySQL / FTP / OSS / SSH / Redis / 本地文件</h2>
         </div>
 
         <!-- 类型胶囊 Tab（nav-pills）+ 操作；切换由 activeType 驱动，见 changeType / activeRows -->
@@ -34,7 +34,7 @@
                         <th style="width: 50px;">#</th>
                         <th style="width: 180px;">名称</th>
                         <th>{{activeMeta.host_label}}{{activeMeta.default_port > 0 ? ' : 端口' : ''}}</th>
-                        <th style="width: 140px;">{{activeMeta.user_label}}</th>
+                        <th style="width: 140px;" v-if="!activeMeta.hide_auth">{{activeMeta.user_label}}</th>
                         <th v-for="field in activeExtraFields" :key="field.key">{{field.label}}</th>
                         <th style="width: 150px;">更新时间</th>
                         <th style="width: 160px;">操作</th>
@@ -45,10 +45,11 @@
                         <td>{{i + 1}}</td>
                         <td>
                             <a v-if="item.type === 'mysql'" :href="'/mysql/' + item.id"><strong>{{item.name}}</strong></a>
+                            <a v-else-if="item.type === 'fs'" :href="'/fs/' + item.id"><strong>{{item.name}}</strong></a>
                             <strong v-else>{{item.name}}</strong>
                         </td>
                         <td style="white-space: nowrap;">{{item.host}}{{item.port > 0 ? ':' + item.port : ''}}</td>
-                        <td>{{item.username}}</td>
+                        <td v-if="!activeMeta.hide_auth">{{item.username}}</td>
                         <td v-for="field in activeExtraFields" :key="field.key" style="word-break: break-all;">
                             {{item.extra ? item.extra[field.key] : ''}}
                         </td>
@@ -64,7 +65,7 @@
                         </td>
                     </tr>
                     <tr v-if="activeRows.length < 1">
-                        <td :colspan="6 + activeExtraFields.length" style="text-align: center; color: #999;">
+                        <td :colspan="(activeMeta.hide_auth ? 5 : 6) + activeExtraFields.length" style="text-align: center; color: #999;">
                             {{loading ? '加载中...' : '暂无 ' + activeMeta.label + ' 配置，点击右上角「新建」添加'}}
                         </td>
                     </tr>
@@ -109,20 +110,20 @@
                                         :placeholder="currentMeta.host_placeholder" />
                                 </div>
                             </div>
-                            <div class="form-group" v-if="currentMeta">
+                            <div class="form-group" v-if="currentMeta && !currentMeta.hide_port">
                                 <label class="col-sm-3 control-label">端口</label>
                                 <div class="col-sm-8">
                                     <input type="number" class="form-control input-sm" v-model.number="form.port"
                                         :placeholder="currentMeta.default_port > 0 ? '默认 ' + currentMeta.default_port : '可选'" />
                                 </div>
                             </div>
-                            <div class="form-group" v-if="currentMeta">
+                            <div class="form-group" v-if="currentMeta && !currentMeta.hide_auth">
                                 <label class="col-sm-3 control-label">{{currentMeta.user_label}}</label>
                                 <div class="col-sm-8">
                                     <input type="text" class="form-control input-sm" v-model="form.username" />
                                 </div>
                             </div>
-                            <div class="form-group" v-if="currentMeta">
+                            <div class="form-group" v-if="currentMeta && !currentMeta.hide_auth">
                                 <label class="col-sm-3 control-label">{{currentMeta.password_label}}</label>
                                 <div class="col-sm-8">
                                     <input type="password" class="form-control input-sm" v-model="form.password"
@@ -156,6 +157,8 @@
         </div>
         <div>
             <a href="/tool/json" class="btn btn-link">JSON 工具</a>
+            <a href="/tool/qrcode" class="btn btn-link">二维码生成</a>
+            <a href="/tool/jsrun" class="btn btn-link">运行 JS 代码</a>
         </div>
     </div>
 </template>

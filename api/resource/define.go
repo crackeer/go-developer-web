@@ -2,6 +2,8 @@ package resource
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/crackeer/go-developer-web/container"
@@ -17,6 +19,7 @@ const (
 	TypeSSH   = "ssh"
 	TypeS3    = "s3"
 	TypeRedis = "redis"
+	TypeFS    = "fs"
 )
 
 // testTimeout 连通性测试的超时时间。
@@ -45,6 +48,8 @@ type TypeMeta struct {
 	PasswordLabel   string     `json:"password_label"`
 	RequireHost     bool       `json:"require_host"`
 	DefaultPort     int        `json:"default_port"`
+	HidePort        bool       `json:"hide_port"` // 表单不展示端口
+	HideAuth        bool       `json:"hide_auth"` // 表单 / 列表不展示用户名、密码
 	ExtraFields     []FieldDef `json:"extra_fields"`
 }
 
@@ -113,6 +118,15 @@ func TypeMetas() []TypeMeta {
 			ExtraFields: []FieldDef{
 				{Key: "db", Label: "DB", Placeholder: "数据库编号（可选，默认 0）"},
 			},
+		},
+		{
+			Type:            TypeFS,
+			Label:           "本地文件",
+			HostLabel:       "文件夹路径",
+			HostPlaceholder: "服务器上已存在的目录绝对路径，如 /data/www",
+			RequireHost:     true,
+			HidePort:        true,
+			HideAuth:        true,
 		},
 	}
 }
@@ -207,6 +221,13 @@ func buildResource(req *SaveRequest) (*container.Resource, *container.Connection
 	if meta.RequireHost && host == "" {
 		return nil, nil, fmt.Sprintf("%s is required", strings.ToLower(meta.HostLabel))
 	}
+	if req.Type == TypeFS {
+		dir, invalid := normalizeRootDir(host)
+		if invalid != "" {
+			return nil, nil, invalid
+		}
+		return &container.Resource{Name: name, ConfigType: req.Type}, &container.ConnectionConfig{Host: dir}, ""
+	}
 	port := req.Port
 	if port <= 0 {
 		port = meta.DefaultPort
@@ -227,4 +248,23 @@ func buildResource(req *SaveRequest) (*container.Resource, *container.Connection
 		config.SetExtra(key, value)
 	}
 	return &container.Resource{Name: name, ConfigType: req.Type}, config, ""
+}
+
+// normalizeRootDir 校验本地文件根目录：必须是已存在的绝对路径目录，且不允许为 /。
+func normalizeRootDir(dir string) (string, string) {
+	if !filepath.IsAbs(dir) {
+		return "", "文件夹路径必须是绝对路径"
+	}
+	dir = filepath.Clean(dir)
+	if dir == string(filepath.Separator) {
+		return "", "文件夹路径不能为根目录 /"
+	}
+	stat, err := os.Stat(dir)
+	if err != nil {
+		return "", "文件夹路径不可访问：" + err.Error()
+	}
+	if !stat.IsDir() {
+		return "", "文件夹路径不是目录"
+	}
+	return dir, ""
 }
